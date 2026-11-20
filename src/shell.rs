@@ -47,8 +47,8 @@ pub fn run(cfg: &Config) -> ! {
 
     vga::with_writer(|w| w.clear());
     println!("{}", tr!(
-        "MLOS v1.0.2 - Type 'help' for commands.\n",
-        "MLOS v1.0.2 - 输入 help 查看命令。\n"
+        "MLOS v1.0.3 - Type 'help' for commands.\n",
+        "MLOS v1.0.3 - 输入 help 查看命令。\n"
     ));
     prompt();
 
@@ -103,10 +103,10 @@ fn execute(line: &str, cfg: &Config) {
         "help" | "?" => cmd_help(),
         "clear" | "cls" => vga::with_writer(|w| w.clear()),
         "echo" => println!("{}", rest),
-        "version" => tprintln!("MLOS version 1.0.2 (x86_64)", "MLOS 版本 1.0.2 (x86_64)"),
+        "version" => tprintln!("MLOS version 1.0.3 (x86_64)", "MLOS 版本 1.0.3 (x86_64)"),
         "about" => cmd_about(),
         "whoami" => println!("{}", current_user()),
-        "uname" => println!("MLOS 1.0.2 mlos-host x86_64 GNU/Rust"),
+        "uname" => println!("MLOS 1.0.3 mlos-host x86_64 GNU/Rust"),
         "date" => tprintln!("Build time: {}", "编译时间: {}", env!("BUILD_TIME")),
         "mem" => cmd_mem(),
         "color" => cmd_color(rest),
