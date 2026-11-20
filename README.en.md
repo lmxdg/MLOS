@@ -70,6 +70,11 @@
 | Disk status (`disk`) | ![disk](screenshots/en_disk.png) |
 | Update check (`update`) | ![update](screenshots/en_update.png) |
 | Games menu | ![games](screenshots/en_games.png) |
+| GUI startup warning (experimental confirmation) | ![gui warning](screenshots/gui_warning.png) |
+| GUI desktop (after `gui on`) | ![gui desktop](screenshots/gui_desktop.png) |
+| GUI Start menu | ![gui menu](screenshots/gui_menu.png) |
+| GUI performance monitor | ![gui perf](screenshots/gui_perf.png) |
+| GUI file viewer | ![gui files](screenshots/gui_files.png) |
 
 ---
 

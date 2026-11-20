@@ -70,6 +70,11 @@
 | 硬盘状态（`disk`） | ![disk](screenshots/en_disk.png) |
 | 更新检测（`update`） | ![update](screenshots/en_update.png) |
 | 游戏菜单 | ![games](screenshots/en_games.png) |
+| GUI 启动警告（实验性功能确认） | ![gui warning](screenshots/gui_warning.png) |
+| GUI 桌面（`gui on` 后） | ![gui desktop](screenshots/gui_desktop.png) |
+| GUI 开始菜单 | ![gui menu](screenshots/gui_menu.png) |
+| GUI 性能监视器 | ![gui perf](screenshots/gui_perf.png) |
+| GUI 文件查看 | ![gui files](screenshots/gui_files.png) |
 
 ---
 
