@@ -33,11 +33,15 @@ pub extern "C" fn kernel_main(_magic: u64, mbi: u64) -> ! {
         w.set_color(Color::LightGray, Color::Black);
         w.put_str("  Architecture : x86_64 (64-bit)\n");
         w.put_str("  Bootloader   : GRUB 2 (Multiboot2)\n");
-        w.put_str("  Display      : VGA text mode 80x25\n");
+        if vga::is_gfx() {
+            w.put_str("  Display      : VGA gfx 320x200 + CJK font\n");
+        } else {
+            w.put_str("  Display      : VGA text mode 80x25\n");
+        }
         let _ = w.write_fmt(format_args!("  Memory       : {} MiB usable\n", mem_kib / 1024));
         let _ = w.write_fmt(format_args!("  Build time   : {}\n", env!("BUILD_TIME")));
         w.set_color(Color::Yellow, Color::Black);
-        w.put_str("\n  Checking system configuration...\n");
+        w.put_str(crate::tr!("\n  Checking system configuration...\n", "\n  正在检查系统配置...\n"));
     });
     let cfg = if setup::is_installed() {
         let stored = storage::load().unwrap();
@@ -65,15 +69,27 @@ pub fn print_banner() {
     vga::with_writer(|w| {
         w.clear();
         w.set_color(Color::LightCyan, Color::Black);
-        w.put_str("  __  __  ___  _     ___  \n");
-        w.put_str("  |  \\/  |/ _ \\| |   / _ \\ \n");
-        w.put_str("  | |\\/| | | | | |  | | | |\n");
-        w.put_str("  | |  | | |_| | |__| |_| |\n");
-        w.put_str("  |_|  |_|\\___/|____|\\___/ \n");
-        w.set_color(Color::LightGreen, Color::Black);
-        w.put_str("  MLOS - Minimal Light Operating System v1.0\n");
-        w.set_color(Color::DarkGray, Color::Black);
-        w.put_str("  --------------------------------------------------------\n");
+        if vga::is_gfx() {
+            // 中文图形模式：点阵标题
+            w.put_str("  神龙操作系统 MLOS\n");
+            w.set_color(Color::LightGreen, Color::Black);
+            w.put_str("  轻量 纯净 Rust 制造\n");
+            w.set_color(Color::LightCyan, Color::Black);
+            w.put_str("  版本 v1.0.1 中文版\n");
+            w.set_color(Color::DarkGray, Color::Black);
+            w.put_str("  ------------------\n");
+        } else {
+            // 英文文本模式：经典 ASCII 艺术字
+            w.put_str("  __  __  ___  _     ___  \n");
+            w.put_str("  |  \\/  |/ _ \\| |   / _ \\ \n");
+            w.put_str("  | |\\/| | | | | |  | | | |\n");
+            w.put_str("  | |  | | |_| | |__| |_| |\n");
+            w.put_str("  |_|  |_|\\___/|____|\\___/ \n");
+            w.set_color(Color::LightGreen, Color::Black);
+            w.put_str("  MLOS - Minimal Light Operating System v1.0.1\n");
+            w.set_color(Color::DarkGray, Color::Black);
+            w.put_str("  --------------------------------------------------------\n");
+        }
     });
 }
 
@@ -96,7 +112,7 @@ fn parse_memory_map(mbi: u64) -> u64 {
     }
     unsafe {
         let total = *(mbi as *const u32) as usize;
-        let mut off = 8usize; // 跳过 total_size 和 reserved
+        let mut off = 8usize;
         while off + 8 <= total {
             let tag_type = *((mbi + off as u64) as *const u32);
             let tag_size = *((mbi + off as u64 + 4) as *const u32) as usize;
@@ -117,7 +133,7 @@ fn parse_memory_map(mbi: u64) -> u64 {
                 }
                 return total_kib;
             }
-            off = (off + tag_size + 7) & !7; // 8 字节对齐
+            off = (off + tag_size + 7) & !7;
         }
     }
     0
