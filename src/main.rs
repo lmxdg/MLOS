@@ -78,7 +78,7 @@ pub fn print_banner() {
         w.put_str("  | |  | | |_| | |__| |_| |\n");
         w.put_str("  |_|  |_|\\___/|____|\\___/ \n");
         w.set_color(Color::LightGreen, Color::Black);
-        w.put_str("  MLOS - Minimal Light Operating System v1.0.2\n");
+        w.put_str("  MLOS - Minimal Light Operating System v1.0.3\n");
         w.set_color(Color::DarkGray, Color::Black);
         w.put_str("  --------------------------------------------------------\n");
     });
