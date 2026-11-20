@@ -22,10 +22,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y grub-common grub-pc-bin xorriso mtools
 
-      - name: Set up Rust nightly with rust-src
+      - name: Set up Rust stable with rust-src
         run: |
-          rustup toolchain install nightly --profile minimal --component rust-src
-          rustup default nightly
+          rustup component add rust-src
           rustc --version
 
       - name: Build MLOS kernel
