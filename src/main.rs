@@ -1,11 +1,14 @@
 #![no_std]
 #![no_main]
 #![allow(dead_code)]
+extern crate alloc;
 
+mod bump_alloc;
 mod ata;
 mod boot;
 mod fs;
 mod games;
+mod gui;
 mod input;
 mod io;
 mod keyboard;
