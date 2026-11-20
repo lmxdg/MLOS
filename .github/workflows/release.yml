@@ -1,0 +1,74 @@
+name: Build and Release MLOS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build kernel, package ISO and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y grub-common grub-pc-bin xorriso mtools
+
+      - name: Set up Rust nightly with rust-src
+        run: |
+          rustup toolchain install nightly --profile minimal --component rust-src
+          rustup default nightly
+          rustc --version
+
+      - name: Build MLOS kernel
+        run: RUSTC_BOOTSTRAP=1 cargo build --release
+
+      - name: Package bootable ISO
+        run: |
+          mkdir -p iso/boot/grub
+          cp target/x86_64-os/release/mlos iso/boot/mlos.bin
+          cp grub.cfg iso/boot/grub/grub.cfg
+          grub-mkrescue -o MLOS.iso iso
+          ls -lh MLOS.iso
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: MLOS v1.0.0
+          body: |
+            ## MLOS v1.0.0 - Minimal Light Operating System
+
+            MLOS 是一个用 Rust 从零编写的 64 位操作系统，以可引导 ISO 镜像交付。
+
+            ### 特性
+            - no_std 裸机内核，Multiboot2 + GRUB 2 引导
+            - 32→64 位长模式切换，VGA 文本显示，PS/2 键盘
+            - 首次启动安装向导：设置用户名与密码（FNV-1a 哈希存储）
+            - ATA PIO 硬盘驱动，用户配置写入硬盘 LBA1 持久化
+            - 小游戏：数字炸弹 / 猜数字 / 石头剪刀布
+            - 实用工具：计算器 / 进制转换 / 素数 / 哈希 / 随机数 / ASCII
+
+            ### 下载
+            - `MLOS.iso` - 可引导 ISO 镜像（BIOS 模式）
+
+            ### 运行
+            ```bash
+            qemu-system-x86_64 -cdrom MLOS.iso -m 128M -boot d -net none \
+              -drive file=mlos-disk.img,format=raw,if=ide,index=0,media=disk
+            ```
+            首次启动进入安装向导；也可 `make all && make run` 从源码构建运行。
+
+            > 注意：ISO 使用 GRUB i386-pc 引导，需 BIOS 模式启动（非纯 UEFI）。
+          files: MLOS.iso
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
