@@ -11,6 +11,11 @@ pub enum Key {
     Backspace,
     Enter,
     Tab,
+    Up,
+    Down,
+    Left,
+    Right,
+    Esc,
 }
 
 pub struct Keyboard {
@@ -42,6 +47,16 @@ impl Keyboard {
         }
         if released {
             return None;
+        }
+
+        // arrow keys & Esc (press codes only)
+        match code {
+            0x48 => return Some(Key::Up),
+            0x50 => return Some(Key::Down),
+            0x4B => return Some(Key::Left),
+            0x4D => return Some(Key::Right),
+            0x01 => return Some(Key::Esc),
+            _ => {}
         }
 
         let upper = self.shift ^ self.caps_lock;
