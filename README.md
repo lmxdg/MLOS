@@ -1,74 +1,74 @@
 # MLOS
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+简体中文 | [English](README.en.md)
 
-**MLOS** (Minimal Light Operating System) is a small 64-bit operating system written from scratch in Rust. It ships as a ~5 MB bootable ISO, boots with GRUB 2 (Multiboot2) on BIOS systems, and includes an interactive shell, a performance monitor, a file browser, a setup wizard with password login, hard-disk persistence, games and tools.
+**MLOS**（Minimal Light Operating System，极轻量操作系统）是一个使用 Rust 从零编写的 64 位操作系统，以约 5 MB 的可引导 ISO 镜像交付。它基于 GRUB 2（Multiboot2）在 BIOS 模式下启动，内置交互式 Shell、性能监视器、文件浏览器、安装向导与密码登录、硬盘数据持久化、小游戏和实用工具。
 
-- **Developer**: MEME-LMXDG
-- **Language**: Rust (`no_std` bare-metal kernel, x86_64)
-- **Repository**: <https://github.com/lmxdg/MLOS>
-- **Downloads**: <https://github.com/lmxdg/MLOS/releases>
-
----
-
-## Features
-
-### Core system
-- 64-bit bare-metal kernel written in pure Rust (`no_std`, `no_main`)
-- Multiboot2 boot header + GRUB 2, 32-bit protected mode → 64-bit long mode trampoline
-- VGA text mode display (80×25, CP437) with hardware cursor
-- PS/2 keyboard driver with full US layout (shift, backspace, enter)
-- Usable-memory detection from the Multiboot2 memory map
-
-### Installation & login
-- First-boot setup wizard: choose a username and password
-- Passwords stored as FNV-1a hashes on disk (never in plain text)
-- Login screen on every subsequent boot
-
-### Hard-disk persistence
-- ATA PIO (LBA28) driver for the Primary Master disk
-- User configuration written to disk sector LBA 1 with magic + checksum
-- MiniFS file store for user files
-
-### Performance monitor (`perf`)
-- **CPU**: vendor string via CPUID, TSC frequency calibrated against the PIT, live TSC cycle count
-- **Memory**: total usable, kernel image footprint, estimated free memory and usage %
-- **Disk**: capacity from ATA IDENTIFY, sectors used by MLOS, free space
-
-### File browser (`ls` / `cat` / `write` / `rm`)
-- MiniFS: a simple file store laid out on raw disk sectors (directory sector at LBA 4, 12 file slots × 4 KB each)
-- Create, list, read and delete text files directly from the shell
-
-### Online update check (`update`)
-- Compares the local version with the latest GitHub release
-- MLOS has no network stack by design; the bundled host script `tools/check_update.sh` fetches the newest release tag from GitHub and writes it into disk sector LBA 3, then `update` reports: *up to date*, *new version available* (+ download URL), or *no info*
-
-### Games
-- Number Bomb, Guess Number, Rock-Paper-Scissors
-
-### Tools
-- Calculator, base conversion, prime check, FNV-1a text hash, random numbers, ASCII table
+- **开发者**：MEME-LMXDG
+- **语言**：Rust（`no_std` 裸机内核，x86_64）
+- **仓库**：<https://github.com/lmxdg/MLOS>
+- **下载页**：<https://github.com/lmxdg/MLOS/releases>
 
 ---
 
-## System Screenshots
+## 系统特性
+
+### 核心系统
+- 纯 Rust 编写的 64 位裸机内核（`no_std`、`no_main`）
+- Multiboot2 引导头 + GRUB 2，32 位保护模式 → 64 位长模式切换
+- VGA 文本模式显示（80×25，CP437），硬件光标
+- PS/2 键盘驱动，完整美式布局（Shift、退格、回车）
+- 通过 Multiboot2 内存映射检测可用内存
+
+### 安装与登录
+- 首次启动进入安装向导：设置用户名与密码
+- 密码以 FNV-1a 哈希写入硬盘，绝不存明文
+- 之后每次启动都需要登录验证
+
+### 硬盘持久化
+- ATA PIO（LBA28）驱动，操作主硬盘
+- 用户配置写入 LBA 1 扇区（魔数 + 校验和）
+- MiniFS 文件存储区，可在硬盘中保存用户文件
+
+### 性能监视器（`perf`）
+- **CPU**：通过 CPUID 读取厂商信息，TSC 频率经 PIT 校准，实时周期计数
+- **内存**：可用总量、内核占用、剩余内存与使用率
+- **硬盘**：通过 ATA IDENTIFY 获取容量、MLOS 已用扇区、剩余空间
+
+### 文件浏览器（`ls` / `cat` / `write` / `rm`）
+- MiniFS：建立在原始硬盘扇区上的简易文件存储（目录扇区位于 LBA 4，共 12 个文件槽位 × 4 KB）
+- 在 Shell 中直接创建、列出、查看和删除文本文件
+
+### 在线更新检测（`update`）
+- 对比本地版本与 GitHub 最新 Release 版本号
+- MLOS 内核本身不带网络栈；配套主机脚本 `tools/check_update.sh` 从 GitHub 拉取最新版本号写入硬盘 LBA 3 扇区，随后 `update` 命令会报告：*已是最新*、*发现新版本*（附下载地址）或*未获取到信息*
+
+### 小游戏
+- 数字炸弹、猜数字、石头剪刀布
+
+### 实用工具
+- 计算器、进制转换、素数判断、FNV-1a 文本哈希、随机数、ASCII 表
+
+---
+
+## 系统截图
 
 | | |
 |---|---|
-| Shell & banner | ![shell](screenshots/en_shell.png) |
-| Help | ![help](screenshots/en_help.png) |
-| About | ![about](screenshots/en_about.png) |
-| Performance monitor (`perf`) | ![perf](screenshots/en_perf.png) |
-| File listing (`ls`) | ![files](screenshots/en_files_ls.png) |
-| File content (`cat`) | ![cat](screenshots/en_files_cat.png) |
-| File delete (`rm`) | ![rm](screenshots/en_files_rm.png) |
-| Disk status (`disk`) | ![disk](screenshots/en_disk.png) |
-| Update check (`update`) | ![update](screenshots/en_update.png) |
-| Games menu | ![games](screenshots/en_games.png) |
+| Shell 与横幅 | ![shell](screenshots/en_shell.png) |
+| 帮助信息 | ![help](screenshots/en_help.png) |
+| 关于系统 | ![about](screenshots/en_about.png) |
+| 性能监视器（`perf`） | ![perf](screenshots/en_perf.png) |
+| 文件列表（`ls`） | ![files](screenshots/en_files_ls.png) |
+| 文件内容（`cat`） | ![cat](screenshots/en_files_cat.png) |
+| 删除文件（`rm`） | ![rm](screenshots/en_files_rm.png) |
+| 硬盘状态（`disk`） | ![disk](screenshots/en_disk.png) |
+| 更新检测（`update`） | ![update](screenshots/en_update.png) |
+| 游戏菜单 | ![games](screenshots/en_games.png) |
 
 ---
 
-## Commands
+## 命令列表
 
 ```
 help    clear   echo    version about   whoami  uname   date    mem
@@ -79,46 +79,46 @@ base    prime   hash    rand    ascii
 
 ---
 
-## Running MLOS in Virtual Machines
+## 在虚拟机中运行 MLOS
 
-> **Important**: MLOS boots with GRUB `i386-pc`, so the VM must use **BIOS (legacy) boot**. Do **not** enable UEFI/EFI in the VM settings. Attach `MLOS.iso` as a CD-ROM, attach a virtual hard disk for persistence, and give the VM at least 128 MB of RAM.
+> **重要**：MLOS 使用 GRUB `i386-pc` 引导，虚拟机必须使用 **BIOS（传统）启动**。**请勿**在虚拟机设置中启用 UEFI/EFI。将 `MLOS.iso` 挂载为 CD-ROM，同时挂载一块虚拟硬盘用于数据持久化，内存至少 128 MB。
 
-### 1. QEMU (Linux / macOS / Windows)
+### 1. QEMU（Linux / macOS / Windows）
 
 ```bash
-# Create a persistent 16 MB raw disk image
+# 创建 16 MB 持久化硬盘镜像
 qemu-img create -f raw mlos-disk.img 16M
 
-# Boot (BIOS mode, CD first)
+# 启动（BIOS 模式，光盘优先启动）
 qemu-system-x86_64 -cdrom MLOS.iso -m 128M -boot d -net none \
   -drive file=mlos-disk.img,format=raw,if=ide,index=0,media=disk
 ```
 
-Options: add `-vga std` for a standard VGA card, `-display gtk` / `-display sdl` to show a window (default).
+可选参数：`-vga std`（标准 VGA 显卡）、`-display gtk` / `-display sdl`（显示窗口，默认即有）。
 
 ### 2. VirtualBox
 
-1. **New** → Name: `MLOS`, Type: `Other`, Version: `Other/Unknown` (or DOS)
-2. Memory: **128 MB** or more
-3. Hard disk: **Create a virtual hard disk now** → VHD or VDI, ≥ 16 MB (attach it as the **IDE Primary Master**)
-4. VM **Settings → Storage**: attach `MLOS.iso` to the **IDE Secondary Master** (optical drive)
-5. Settings → **System → Boot Order**: put **Optical** first
-6. Settings → **System → Motherboard**: **do not enable EFI**
-7. Start the VM. First boot runs the setup wizard; afterwards remove the ISO (Storage → remove disk from virtual drive) and boot from the hard disk.
+1. **新建** → 名称 `MLOS`，类型选 `Other`，版本选 `Other/Unknown`（或 DOS）
+2. 内存：**128 MB** 或以上
+3. 虚拟硬盘：**现在创建虚拟硬盘** → VHD 或 VDI，容量 ≥ 16 MB，挂载为 **IDE 主通道主盘**（Primary Master）
+4. 虚拟机 **设置 → 存储**：把 `MLOS.iso` 挂载到 **IDE 次通道主盘**（光驱）
+5. 设置 → **系统 → 启动顺序**：把 **光驱** 放到第一位
+6. 设置 → **系统 → 主板**：**不要勾选「启用 EFI」**
+7. 启动虚拟机。首次启动进入安装向导；完成后在「存储」中移除 ISO，之后即可从硬盘启动。
 
-### 3. VMware (Workstation Pro / Player / Fusion)
+### 3. VMware（Workstation Pro / Player / Fusion）
 
-1. **Create a New Virtual Machine** → choose **I will install the operating system later**
-2. Guest OS: **Other** → Version: **Other** (BIOS firmware is the default)
-3. Memory: 128 MB or more
-4. Disk: create a new virtual disk (IDE recommended), ≥ 16 MB
-5. **Edit virtual machine settings → CD/DVD (IDE)**: *Use ISO image file* → select `MLOS.iso`, check **Connect at power on**
-6. Firmware: keep **BIOS** (Options → Advanced → Firmware type: BIOS; do not select EFI)
-7. Power on. After the first-boot setup, eject the ISO from the CD/DVD device and boot from disk.
+1. **创建新的虚拟机** → 选择 **稍后安装操作系统**
+2. 客户机操作系统：**其他** → 版本：**其他**（默认固件为 BIOS）
+3. 内存：128 MB 或以上
+4. 磁盘：新建虚拟磁盘（建议 IDE 控制器），容量 ≥ 16 MB
+5. **编辑虚拟机设置 → CD/DVD (IDE)**：选择 *使用 ISO 映像文件* → 选中 `MLOS.iso`，勾选 **启动时连接**
+6. 固件保持 **BIOS**（选项 → 高级 → 固件类型选 BIOS，不要选 EFI）
+7. 开机。首次安装完成后，从 CD/DVD 设备中弹出 ISO，改为从硬盘启动。
 
 ### 4. Bochs
 
-`bochsrc`:
+`bochsrc` 配置：
 
 ```
 megs: 128
@@ -127,86 +127,86 @@ ata0-master: type=disk, path="mlos-disk.img", mode=flat, cylinders=32, heads=16,
 ata0-slave: type=cdrom, path="MLOS.iso", status=inserted
 ```
 
-Run: `bochs -q` (create `mlos-disk.img` with `bximage -hd -size=16 -imgmode=flat mlos-disk.img`).
+运行 `bochs -q`（先用 `bximage -hd -size=16 -imgmode=flat mlos-disk.img` 创建硬盘镜像）。
 
-### 5. Hyper-V (Windows)
+### 5. Hyper-V（Windows）
 
-1. Hyper-V Manager → **New → Virtual Machine**
-2. Generation: **Generation 1** (BIOS firmware; Generation 2 is UEFI-only and will not boot)
-3. Memory: 128 MB startup RAM, disable dynamic memory if issues occur
-4. Networking: disconnect (not required)
-5. Virtual hard disk: create a small VHD (≥ 16 MB), attach it to the IDE controller
-6. Installation options: *Install an operating system from a bootable CD/DVD* → image file → `MLOS.iso`
-7. After setup, remove the ISO from the VM's DVD drive and boot from the virtual hard disk.
+1. Hyper-V 管理器 → **新建 → 虚拟机**
+2. 代数：选 **第一代**（第一代为 BIOS 固件；第二代仅支持 UEFI，无法启动）
+3. 内存：启动内存 128 MB，如遇问题请关闭动态内存
+4. 网络：断开（无需网络）
+5. 虚拟硬盘：创建一个小型 VHD（≥ 16 MB），挂载到 IDE 控制器
+6. 安装选项：*从可启动的 CD/DVD 安装操作系统* → 映像文件 → 选择 `MLOS.iso`
+7. 安装完成后，从虚拟机的 DVD 驱动器中移除 ISO，改为从虚拟硬盘启动。
 
-### First boot flow (all VMs)
+### 首次启动流程（所有虚拟机通用）
 
-1. Boot from the ISO → setup wizard → set username & password
-2. The config is written to the virtual hard disk and survives reboots
-3. Log in → try `perf`, `write`, `ls`, `cat`, `games`, `update`
+1. 从 ISO 启动 → 安装向导 → 设置用户名与密码
+2. 配置写入虚拟硬盘，重启后依然保留
+3. 登录后体验 `perf`、`write`、`ls`、`cat`、`games`、`update`
 
 ---
 
-## Build from Source
+## 从源码构建
 
-Requirements: Rust (1.93.0 recommended) with `rust-src`, `grub-mkrescue`, `xorriso`, `mtools`, QEMU.
+环境要求：Rust（推荐 1.93.0）及 `rust-src` 组件、`grub-mkrescue`、`xorriso`、`mtools`、QEMU。
 
 ```bash
-# Build the kernel and ISO
-make iso          # produces MLOS.iso
+# 构建内核并打包 ISO
+make iso          # 生成 MLOS.iso
 ```
 
-### Update check
+### 更新检测
 
 ```bash
-# On the host: fetch the latest GitHub release tag into the disk image
+# 在宿主机上执行：把 GitHub 最新 Release 版本号写入硬盘镜像
 ./tools/check_update.sh mlos-disk.img
-# Then boot MLOS and run:  update
+# 然后启动 MLOS，登录后运行：update
 ```
 
 ---
 
-## Project Layout
+## 项目结构
 
 ```
 MLOS/
 ├── src/
-│   ├── main.rs          # kernel entry, banner, memory-map parsing
-│   ├── boot.rs          # 32-bit → 64-bit long mode trampoline
-│   ├── vga.rs           # VGA text-mode terminal + print macros
-│   ├── keyboard.rs      # PS/2 keyboard driver
-│   ├── input.rs         # line editing helpers
-│   ├── io.rs            # port I/O (inb/outb/rdtsc...)
-│   ├── ata.rs           # ATA PIO disk driver (read/write/identify)
-│   ├── storage.rs       # user config persistence (LBA 1)
-│   ├── fs.rs            # MiniFS file store (LBA 4+)
-│   ├── perf.rs          # performance monitor (CPUID/TSC/PIT)
-│   ├── update.rs        # version compare + remote info (LBA 3)
-│   ├── setup.rs         # setup wizard + login
-│   ├── shell.rs         # interactive shell
-│   ├── games.rs         # games
-│   ├── tools.rs         # tools
-│   └── rng.rs           # xorshift64* random numbers
+│   ├── main.rs          # 内核入口、横幅、内存映射解析
+│   ├── boot.rs          # 32 位 → 64 位长模式切换
+│   ├── vga.rs           # VGA 文本模式终端 + 打印宏
+│   ├── keyboard.rs      # PS/2 键盘驱动
+│   ├── input.rs         # 行编辑辅助
+│   ├── io.rs            # 端口 I/O（inb/outb/rdtsc 等）
+│   ├── ata.rs           # ATA PIO 硬盘驱动（读/写/识别）
+│   ├── storage.rs       # 用户配置持久化（LBA 1）
+│   ├── fs.rs            # MiniFS 文件存储（LBA 4 起）
+│   ├── perf.rs          # 性能监视器（CPUID/TSC/PIT）
+│   ├── update.rs        # 版本对比 + 远端版本信息（LBA 3）
+│   ├── setup.rs         # 安装向导 + 登录
+│   ├── shell.rs         # 交互式 Shell
+│   ├── games.rs         # 小游戏
+│   ├── tools.rs         # 实用工具
+│   └── rng.rs           # xorshift64* 随机数
 ├── tools/
-│   └── check_update.sh  # host-side update fetcher
-├── screenshots/         # system screenshots (English UI)
-├── grub.cfg             # GRUB menu
-├── linker.ld            # kernel linker script
-├── x86_64-os.json       # custom Rust target
-└── Makefile             # build / iso / run targets
+│   └── check_update.sh  # 主机侧更新拉取脚本
+├── screenshots/         # 系统截图（英文界面）
+├── grub.cfg             # GRUB 菜单
+├── linker.ld            # 内核链接脚本
+├── x86_64-os.json       # 自定义 Rust target
+└── Makefile             # 构建 / ISO / 运行目标
 ```
 
 ---
 
-## Disk Layout (MiniFS & system sectors)
+## 硬盘布局（系统扇区与 MiniFS）
 
-| LBA | Purpose |
-|-----|---------|
-| 1   | User configuration (magic `MLOS`, username, FNV-1a password hash, checksum) |
-| 3   | Remote version info (magic `UPDT`, written by `tools/check_update.sh`) |
-| 4   | MiniFS directory (magic `MFSD`, 12 entries) |
-| 5+  | MiniFS file data, 8 sectors (4 KB) per slot |
+| LBA | 用途 |
+|-----|------|
+| 1   | 用户配置（魔数 `MLOS`、用户名、FNV-1a 密码哈希、校验和） |
+| 3   | 远端版本信息（魔数 `UPDT`，由 `tools/check_update.sh` 写入） |
+| 4   | MiniFS 目录扇区（魔数 `MFSD`，12 个条目） |
+| 5+  | MiniFS 文件数据，每槽位 8 个扇区（4 KB） |
 
-## License
+## 许可证
 
 MIT
