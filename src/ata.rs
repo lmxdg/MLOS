@@ -124,3 +124,33 @@ pub fn write_sector(lba: u32, buf: &[u16; 256]) -> bool {
         wait_not_busy()
     }
 }
+
+/// 通过 IDENTIFY DEVICE 获取 LBA28 可寻址扇区总数（0 表示未知）
+pub fn capacity_sectors() -> u32 {
+    unsafe {
+        if !wait_not_busy() {
+            return 0;
+        }
+        outb(DRIVE_HEAD, 0xE0);
+        for _ in 0..100_000 {
+            if inb(STATUS) & (STATUS_BSY | STATUS_DRQ) == 0 {
+                break;
+            }
+        }
+        outb(SECTOR_COUNT, 0);
+        outb(LBA_LOW, 0);
+        outb(LBA_MID, 0);
+        outb(LBA_HIGH, 0);
+        outb(COMMAND, 0xEC); // IDENTIFY DEVICE
+        if !wait_for_drq() {
+            return 0;
+        }
+        let mut id = [0u16; 256];
+        for w in id.iter_mut() {
+            *w = inw(DATA);
+        }
+        // words 60-61 = total addressable LBA28 sectors
+        let sectors = (id[60] as u32) | ((id[61] as u32) << 16);
+        sectors
+    }
+}

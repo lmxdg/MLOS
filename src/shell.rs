@@ -47,8 +47,8 @@ pub fn run(cfg: &Config) -> ! {
 
     vga::with_writer(|w| w.clear());
     println!("{}", tr!(
-        "MLOS v1.0.1 - Type 'help' for commands, 'render gfx' for Chinese.\n",
-        "MLOS v1.0.1 - 输入 help 查看命令，render text 切换英文。\n"
+        "MLOS v1.0.2 - Type 'help' for commands.\n",
+        "MLOS v1.0.2 - 输入 help 查看命令。\n"
     ));
     prompt();
 
@@ -103,11 +103,10 @@ fn execute(line: &str, cfg: &Config) {
         "help" | "?" => cmd_help(),
         "clear" | "cls" => vga::with_writer(|w| w.clear()),
         "echo" => println!("{}", rest),
-        "version" => tprintln!("MLOS version 1.0.1 (x86_64)", "MLOS 版本 1.0.1 (x86_64)"),
+        "version" => tprintln!("MLOS version 1.0.2 (x86_64)", "MLOS 版本 1.0.2 (x86_64)"),
         "about" => cmd_about(),
-        "render" => cmd_render(rest),
         "whoami" => println!("{}", current_user()),
-        "uname" => println!("MLOS 1.0.1 mlos-host x86_64 GNU/Rust"),
+        "uname" => println!("MLOS 1.0.2 mlos-host x86_64 GNU/Rust"),
         "date" => tprintln!("Build time: {}", "编译时间: {}", env!("BUILD_TIME")),
         "mem" => cmd_mem(),
         "color" => cmd_color(rest),
@@ -142,6 +141,11 @@ fn execute(line: &str, cfg: &Config) {
         // 磁盘/系统
         "disk" => cmd_disk(),
         "update" => cmd_update(),
+        "perf" => cmd_perf(),
+        "ls" | "files" => cmd_ls(),
+        "cat" => cmd_cat(rest),
+        "write" => cmd_write(rest),
+        "rm" => cmd_rm(rest),
         "setup" => cmd_setup(cfg),
         _ => println!("mlos: command not found: {}\nType 'help' for available commands.", cmd),
     }
@@ -165,9 +169,13 @@ fn cmd_help() {
     tprintln!("  mem                Show memory", "  mem                显示内存");
     tprintln!("  disk               Show disk status", "  disk               显示硬盘状态");
     tprintln!("  update             Check for updates", "  update             检测系统更新");
+    tprintln!("  perf               Performance monitor (CPU/mem/disk)", "  perf               性能监视器(CPU/内存/硬盘)");
+    tprintln!("  ls                 List files on disk", "  ls                 列出硬盘文件");
+    tprintln!("  cat <file>         Show file content", "  cat <文件>         查看文件内容");
+    tprintln!("  write <file> <text> Write a file", "  write <文件> <内容> 写入文件");
+    tprintln!("  rm <file>          Delete a file", "  rm <文件>          删除文件");
     tprintln!("  color <fg> <bg>    Set color (0-15)", "  color <前景> <背景> 设置颜色(0-15)");
     tprintln!("  banner             Redraw banner", "  banner             重绘横幅");
-    tprintln!("  render text/gfx    Switch rendering", "  render text/gfx    切换渲染方式");
     tprintln!("  setup              Re-run setup wizard", "  setup              重新运行安装向导");
     tprintln!("  reboot             Reboot system", "  reboot             重启系统");
     tprintln!("  halt               Halt system", "  halt               停机");
@@ -183,7 +191,7 @@ fn cmd_about() {
     tprintln!("  - Author  : MEME-LMXDG", "  - 开发者  : MEME-LMXDG");
     tprintln!("  - Arch    : x86_64 (64-bit)", "  - 架构    : x86_64 (64位)");
     tprintln!("  - Boot    : GRUB 2 (Multiboot2)", "  - 引导    : GRUB 2 (Multiboot2)");
-    tprintln!("  - Display : dual-mode (text / CJK gfx)", "  - 显示    : 双模式(文本/中文图形)");
+    tprintln!("  - Display : VGA text mode 80x25 (English)", "  - 显示    : VGA 文本模式 80x25");
     tprintln!("  - Input   : PS/2 keyboard", "  - 输入    : PS/2 键盘");
     tprintln!("  - Storage : ATA PIO hard disk (persistent config)", "  - 存储    : ATA PIO 硬盘(配置持久化)");
     tprintln!("  - Core    : no_std bare-metal kernel", "  - 内核    : no_std 裸机内核");
@@ -351,22 +359,132 @@ fn reboot() {
 #[allow(dead_code)]
 fn _wait_key() { wait_key(); }
 
-/// 自由切换两种渲染方式：text=英文文本，gfx=中文图形。
-fn cmd_render(rest: &str) {
-    match rest.trim() {
-        "text" | "en" => {
-            vga::set_mode(vga::RenderMode::Text);
-            crate::print_banner();
-            println!("Switched to English text mode.");
+/// Performance monitor: CPU / memory / disk.
+fn cmd_perf() {
+    println!("");
+    vga::with_writer(|w| {
+        w.set_color(Color::LightBlue, Color::Black);
+        w.put_str("  === Performance Monitor ===\n");
+        w.set_color(Color::White, Color::Black);
+    });
+
+    // CPU
+    let cpu = crate::perf::cpu_info();
+    let vendor = core::str::from_utf8(&cpu.vendor[..12]).unwrap_or("unknown");
+    vga::with_writer(|w| w.set_color(Color::LightCyan, Color::Black));
+    tprintln!("  [CPU]", "  [CPU]");
+    vga::with_writer(|w| w.set_color(Color::White, Color::Black));
+    tprintln!("  Vendor        : {}", "  厂商          : {}", vendor);
+    let mhz = cpu.tsc_hz / 1_000_000;
+    if cpu.tsc_hz > 0 {
+        tprintln!("  TSC frequency : ~{} MHz", "  TSC 频率      : ~{} MHz", mhz);
+    } else {
+        tprintln!("  TSC frequency : unavailable", "  TSC 频率      : 不可用");
+    }
+    tprintln!("  TSC cycles    : {}", "  TSC 周期      : {}", cpu.tsc_now);
+
+    // Memory
+    let mem = crate::perf::mem_info();
+    vga::with_writer(|w| w.set_color(Color::LightCyan, Color::Black));
+    tprintln!("  [MEMORY]", "  [内存]");
+    vga::with_writer(|w| w.set_color(Color::White, Color::Black));
+    tprintln!("  Total usable  : {} KiB ({} MiB)", "  可用总量      : {} KiB ({} MiB)", mem.total_kib, mem.total_kib / 1024);
+    tprintln!("  Kernel used   : ~{} KiB", "  内核占用      : ~{} KiB", mem.kernel_kib);
+    tprintln!("  Free (est.)   : {} KiB", "  剩余(估算)    : {} KiB", mem.free_kib);
+    if mem.total_kib > 0 {
+        let used_pct = (mem.kernel_kib * 100) / mem.total_kib.max(1);
+        tprintln!("  Usage         : {}%", "  使用率        : {}%", used_pct.min(100));
+    }
+
+    // Disk
+    let disk = crate::perf::disk_info();
+    vga::with_writer(|w| w.set_color(Color::LightCyan, Color::Black));
+    tprintln!("  [DISK]", "  [硬盘]");
+    vga::with_writer(|w| w.set_color(Color::White, Color::Black));
+    if !disk.present {
+        tprintln!("  No hard disk detected.", "  未检测到硬盘。");
+    } else {
+        tprintln!("  Total         : {} sectors ({} KiB)", "  总容量        : {} 扇区 ({} KiB)", disk.total_sectors, disk.total_sectors / 2);
+        tprintln!("  Used by MLOS  : {} sectors", "  已用          : {} 扇区", disk.used_sectors);
+        let free = disk.total_sectors.saturating_sub(disk.used_sectors);
+        tprintln!("  Free          : {} sectors ({} KiB)", "  剩余          : {} 扇区 ({} KiB)", free, free / 2);
+    }
+    println!("");
+}
+
+/// File browser: list files stored on the hard disk.
+fn cmd_ls() {
+    println!("");
+    match crate::fs::list() {
+        Some((entries, count)) => {
+            if count == 0 {
+                println!("(no files - use: write <name> <text>)");
+                return;
+            }
+            vga::with_writer(|w| {
+                w.set_color(Color::LightCyan, Color::Black);
+                w.put_str("  NAME                              SIZE (bytes)\n");
+                w.set_color(Color::White, Color::Black);
+            });
+            for e in entries.into_iter().flatten() {
+                let name = e.name_str();
+                tprintln!("  {:<32} {:>8}", "  {:<32} {:>8}", name, e.size);
+            }
+            tprintln!("  {} file(s)", "  共 {} 个文件", count);
         }
-        "gfx" | "cn" | "zh" | "中文" => {
-            vga::set_mode(vga::RenderMode::Gfx);
-            crate::print_banner();
-            println!("已切换到中文图形模式。");
+        None => println!("fs: cannot read directory sector."),
+    }
+    println!("");
+}
+
+/// Show the content of a file.
+fn cmd_cat(rest: &str) {
+    let name = rest.trim();
+    if name.is_empty() {
+        println!("Usage: cat <file>");
+        return;
+    }
+    let mut buf = [0u8; crate::fs::MAX_FILE_SIZE];
+    match crate::fs::read(name, &mut buf) {
+        Some(n) => {
+            println!("--- {} ({} bytes) ---", name, n);
+            let text = core::str::from_utf8(&buf[..n]).unwrap_or("(binary data)");
+            println!("{}", text);
+            println!("--- end ---");
         }
-        _ => println!("{}", tr!(
-            "Usage: render text | render gfx",
-            "用法: render text | render gfx"
-        )),
+        None => println!("cat: no such file: {}", name),
+    }
+}
+
+/// Write (create or overwrite) a file with text content.
+fn cmd_write(rest: &str) {
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let name = match parts.next() {
+        Some(n) => n.trim(),
+        None => "",
+    };
+    let text = parts.next().unwrap_or("").trim();
+    if name.is_empty() || text.is_empty() {
+        println!("Usage: write <file> <text>");
+        return;
+    }
+    if crate::fs::write(name, text.as_bytes()) {
+        println!("Wrote {} bytes to '{}'.", text.len(), name);
+    } else {
+        println!("write: failed (disk error, name too long, or no free slots).");
+    }
+}
+
+/// Delete a file.
+fn cmd_rm(rest: &str) {
+    let name = rest.trim();
+    if name.is_empty() {
+        println!("Usage: rm <file>");
+        return;
+    }
+    if crate::fs::delete(name) {
+        println!("Deleted '{}'.", name);
+    } else {
+        println!("rm: no such file: {}", name);
     }
 }

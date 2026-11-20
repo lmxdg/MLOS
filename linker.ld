@@ -4,6 +4,8 @@ SECTIONS {
     /* 内核加载到 2 MiB，避免与 GRUB 自身（常驻 1 MiB 附近）冲突 */
     . = 2M;
 
+    __kernel_start = .;
+
     .text : ALIGN(8) {
         KEEP(*(.multiboot))
         *(.text .text.*)
@@ -21,6 +23,8 @@ SECTIONS {
         *(.bss .bss.*)
         *(COMMON)
     }
+
+    __kernel_end = .;
 
     /DISCARD/ : {
         *(.eh_frame)

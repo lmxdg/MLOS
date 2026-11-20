@@ -16,7 +16,7 @@
 use crate::ata;
 
 /// 本地版本号（与 Cargo.toml 保持一致）
-pub const LOCAL_VERSION: &str = "1.0.1";
+pub const LOCAL_VERSION: &str = "1.0.2";
 
 /// GitHub Releases 页面
 pub const RELEASES_URL: &str = "github.com/lmxdg/MLOS/releases";
