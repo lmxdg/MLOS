@@ -1,6 +1,6 @@
 # MLOS
 
-[English](README.md) | [中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md)
 
 **MLOS**（Minimal Light Operating System，极轻量操作系统）是一个使用 Rust 从零编写的 64 位操作系统，以约 5 MB 的可引导 ISO 镜像交付。它基于 GRUB 2（Multiboot2）在 BIOS 模式下启动，内置交互式 Shell、性能监视器、文件浏览器、安装向导与密码登录、硬盘数据持久化、小游戏和实用工具。
 
