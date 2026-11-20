@@ -55,16 +55,23 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: MLOS v1.0.0
+          tag_name: v1.0.1
+          name: MLOS v1.0.1
           body: |
-            ## MLOS v1.0.0 - Minimal Light Operating System
+            ## MLOS v1.0.1 - Minimal Light Operating System
 
             MLOS 是一个用 Rust 从零编写的 64 位操作系统，以可引导 ISO 镜像交付。
+            v1.0.1 新增**双渲染引擎**与**中文显示**，可在两种渲染方式间自由切换。
 
-            ### 特性
-            - no_std 裸机内核，Multiboot2 + GRUB 2 引导
-            - 32→64 位长模式切换，VGA 文本显示，PS/2 键盘
+            ### 新特性（v1.0.1）
+            - **双渲染引擎**：`render text` 英文文本模式 / `render gfx` 中文图形模式，随时切换
+            - **中文显示**：VGA 模式 13h + 内嵌 16×16 中文点阵字库（618 字形），UTF-8 渲染
+            - **在线更新检测**：`update` 命令对比本地版本与 GitHub 最新版本（经主机脚本写入硬盘桥接）
+            - 全界面双语化：游戏 / 工具 / 安装向导 / 登录均支持中英文
+
+            ### 核心特性
+            - no_std 裸机内核，Multiboot2 + GRUB 2 引导，32→64 位长模式切换
+            - PS/2 键盘、VGA 显示、内存检测
             - 首次启动安装向导：设置用户名与密码（FNV-1a 哈希存储）
             - ATA PIO 硬盘驱动，用户配置写入硬盘 LBA1 持久化
             - 小游戏：数字炸弹 / 猜数字 / 石头剪刀布
@@ -78,9 +85,9 @@ jobs:
             qemu-system-x86_64 -cdrom MLOS.iso -m 128M -boot d -net none \
               -drive file=mlos-disk.img,format=raw,if=ide,index=0,media=disk
             ```
-            首次启动进入安装向导；也可 `make all && make run` 从源码构建运行。
+            首次启动进入安装向导；登录后在 Shell 执行 `render gfx` 看中文界面，`update` 检测更新。
 
-            > 注意：ISO 使用 GRUB i386-pc 引导，需 BIOS 模式启动（非纯 UEFI）。
+            > 开发者：MEME-LMXDG · ISO 使用 GRUB i386-pc 引导，需 BIOS 模式（非纯 UEFI）。
           files: MLOS.iso
           generate_release_notes: false
         env:
