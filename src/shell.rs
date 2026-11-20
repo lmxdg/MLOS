@@ -141,6 +141,7 @@ fn execute(line: &str, cfg: &Config) {
         // 磁盘/系统
         "disk" => cmd_disk(),
         "update" => cmd_update(),
+        "gui" => cmd_gui(rest),
         "perf" => cmd_perf(),
         "ls" | "files" => cmd_ls(),
         "cat" => cmd_cat(rest),
@@ -170,6 +171,7 @@ fn cmd_help() {
     tprintln!("  disk               Show disk status", "  disk               显示硬盘状态");
     tprintln!("  update             Check for updates", "  update             检测系统更新");
     tprintln!("  perf               Performance monitor (CPU/mem/disk)", "  perf               性能监视器(CPU/内存/硬盘)");
+    tprintln!("  gui on             Launch experimental GUI (asked to confirm)", "  gui on             启动实验性 GUI(需确认)");
     tprintln!("  ls                 List files on disk", "  ls                 列出硬盘文件");
     tprintln!("  cat <file>         Show file content", "  cat <文件>         查看文件内容");
     tprintln!("  write <file> <text> Write a file", "  write <文件> <内容> 写入文件");
@@ -358,6 +360,35 @@ fn reboot() {
 // 保留 wait_key 引用避免未使用告警（setup/games 已用）
 #[allow(dead_code)]
 fn _wait_key() { wait_key(); }
+
+/// Experimental GUI launcher. Disabled by default; `gui on` asks for
+/// confirmation because the GUI is experimental and may misbehave.
+fn cmd_gui(rest: &str) {
+    if rest.trim() != "on" {
+        println!("GUI is currently OFF (default).");
+        println!("Usage: gui on");
+        return;
+    }
+    println!("");
+    vga::with_writer(|w| {
+        w.set_color(Color::LightRed, Color::Black);
+        w.put_str("  *** WARNING: EXPERIMENTAL FEATURE ***\n");
+        w.set_color(Color::White, Color::Black);
+    });
+    println!("The GUI is experimental and is NOT guaranteed to work correctly.");
+    println!("It may freeze, display artifacts, or behave unexpectedly.");
+    print!("Do you really want to enable it? Type 'yes' to continue: ");
+    let mut buf = [0u8; 16];
+    let n = read_line(&mut buf, None);
+    let ans = core::str::from_utf8(&buf[..n]).unwrap_or("").trim();
+    if !ans.eq_ignore_ascii_case("yes") {
+        println!("GUI launch cancelled. Staying in text shell.");
+        return;
+    }
+    println!("Starting GUI...");
+    crate::gui::run();
+    println!("Type 'help' for commands.");
+}
 
 /// Performance monitor: CPU / memory / disk.
 fn cmd_perf() {
