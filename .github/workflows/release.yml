@@ -22,13 +22,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y grub-common grub-pc-bin xorriso mtools
 
-      - name: Set up Rust stable with rust-src
+      - name: Install Rust 1.93.0 with rust-src
         run: |
-          rustup component add rust-src
+          rustup toolchain install 1.93.0 --profile minimal --component rust-src
+          rustup default 1.93.0
           rustc --version
+          cargo --version
 
       - name: Build MLOS kernel
-        run: RUSTC_BOOTSTRAP=1 cargo build --release
+        run: |
+          set +e
+          RUSTC_BOOTSTRAP=1 cargo build --release > /tmp/build.log 2>&1
+          EC=$?
+          echo "cargo build exit code: $EC"
+          cat /tmp/build.log
+          {
+            echo "### Build log (exit $EC)"
+            echo '```text'
+            cat /tmp/build.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $EC
 
       - name: Package bootable ISO
         run: |
