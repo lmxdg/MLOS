@@ -1,6 +1,6 @@
 # MLOS
 
-[English](README.md) | [中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md)
 
 **MLOS** (Minimal Light Operating System) is a small 64-bit operating system written from scratch in Rust. It ships as a ~5 MB bootable ISO, boots with GRUB 2 (Multiboot2) on BIOS systems, and includes an interactive shell, a performance monitor, a file browser, a setup wizard with password login, hard-disk persistence, games and tools.
 
