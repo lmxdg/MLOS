@@ -43,6 +43,11 @@
 - Compares the local version with the latest GitHub release
 - MLOS has no network stack by design; the bundled host script `tools/check_update.sh` fetches the newest release tag from GitHub and writes it into disk sector LBA 3, then `update` reports: *up to date*, *new version available* (+ download URL), or *no info*
 
+### Experimental GUI (`gui on`)
+- Windows-like desktop drawn on the text screen: wallpaper, taskbar with a **Start** menu, tiled windows (Performance Monitor / File Explorer / File Viewer / About)
+- Keyboard interaction: `M` opens the Start menu, arrows navigate, `Enter` opens items, `Tab` switches window focus, `Esc` closes windows / exits
+- **Disabled by default.** `gui on` first warns that this is an experimental feature that is not guaranteed to work, and asks for confirmation
+
 ### Games
 - Number Bomb, Guess Number, Rock-Paper-Scissors
 
