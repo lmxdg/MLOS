@@ -1,5 +1,5 @@
 //! VGA text-mode terminal (80x25, framebuffer 0xB8000, CP437).
-//! English-only output for MLOS v1.0.3.
+//! English-only output for MLOS v1.0.5.
 
 use core::fmt;
 
@@ -41,6 +41,9 @@ pub trait Console: fmt::Write {
     fn put_str(&mut self, s: &str);
     fn backspace(&mut self);
     fn update_cursor(&mut self);
+    fn set_pos(&mut self, row: usize, col: usize);
+    /// Write any raw byte (CP437 glyphs) at the cursor without filtering.
+    fn put_raw(&mut self, byte: u8);
 }
 
 pub struct TextConsole {
@@ -145,6 +148,21 @@ impl TextConsole {
         TextConsole::update_cursor(self);
     }
 
+    pub fn put_raw(&mut self, byte: u8) {
+        if self.col >= WIDTH {
+            self.newline();
+        }
+        self.write_char_at(self.row, self.col, byte);
+        self.col += 1;
+    }
+
+    pub fn set_pos(&mut self, row: usize, col: usize) {
+        if row < HEIGHT && col < WIDTH {
+            self.row = row;
+            self.col = col;
+        }
+    }
+
     pub fn update_cursor(&self) {
         let pos = self.row * WIDTH + self.col;
         unsafe {
@@ -174,6 +192,12 @@ impl Console for TextConsole {
     }
     fn update_cursor(&mut self) {
         TextConsole::update_cursor(self);
+    }
+    fn set_pos(&mut self, row: usize, col: usize) {
+        TextConsole::set_pos(self, row, col);
+    }
+    fn put_raw(&mut self, byte: u8) {
+        TextConsole::put_raw(self, byte);
     }
 }
 

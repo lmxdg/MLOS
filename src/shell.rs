@@ -47,8 +47,8 @@ pub fn run(cfg: &Config) -> ! {
 
     vga::with_writer(|w| w.clear());
     println!("{}", tr!(
-        "MLOS v1.0.3 - Type 'help' for commands.\n",
-        "MLOS v1.0.3 - 输入 help 查看命令。\n"
+        "MLOS v1.0.5 - Type 'help' for commands.\n",
+        "MLOS v1.0.5 - 输入 help 查看命令。\n"
     ));
     prompt();
 
@@ -103,10 +103,10 @@ fn execute(line: &str, cfg: &Config) {
         "help" | "?" => cmd_help(),
         "clear" | "cls" => vga::with_writer(|w| w.clear()),
         "echo" => println!("{}", rest),
-        "version" => tprintln!("MLOS version 1.0.3 (x86_64)", "MLOS 版本 1.0.3 (x86_64)"),
+        "version" => tprintln!("MLOS version 1.0.5 (x86_64)", "MLOS 版本 1.0.5 (x86_64)"),
         "about" => cmd_about(),
         "whoami" => println!("{}", current_user()),
-        "uname" => println!("MLOS 1.0.3 mlos-host x86_64 GNU/Rust"),
+        "uname" => println!("MLOS 1.0.5 mlos-host x86_64 GNU/Rust"),
         "date" => tprintln!("Build time: {}", "编译时间: {}", env!("BUILD_TIME")),
         "mem" => cmd_mem(),
         "color" => cmd_color(rest),
@@ -140,6 +140,8 @@ fn execute(line: &str, cfg: &Config) {
 
         // 磁盘/系统
         "disk" => cmd_disk(),
+        "usb" => cmd_usb(),
+        "resolution" => cmd_resolution(),
         "update" => cmd_update(),
         "gui" => cmd_gui(rest),
         "perf" => cmd_perf(),
@@ -148,6 +150,7 @@ fn execute(line: &str, cfg: &Config) {
         "write" => cmd_write(rest),
         "rm" => cmd_rm(rest),
         "setup" => cmd_setup(cfg),
+        "bootinstall" => cmd_bootinstall(),
         _ => println!("mlos: command not found: {}\nType 'help' for available commands.", cmd),
     }
 }
@@ -171,6 +174,8 @@ fn cmd_help() {
     tprintln!("  disk               Show disk status", "  disk               显示硬盘状态");
     tprintln!("  update             Check for updates", "  update             检测系统更新");
     tprintln!("  perf               Performance monitor (CPU/mem/disk)", "  perf               性能监视器(CPU/内存/硬盘)");
+    tprintln!("  usb                USB controllers & compatibility (1.0-3.2)", "  usb                USB 控制器与兼容性(1.0-3.2)");
+    tprintln!("  resolution         Display resolution info (adaptive)", "  resolution         显示分辨率信息(自适应)");
     tprintln!("  gui on             Launch experimental GUI (asked to confirm)", "  gui on             启动实验性 GUI(需确认)");
     tprintln!("  ls                 List files on disk", "  ls                 列出硬盘文件");
     tprintln!("  cat <file>         Show file content", "  cat <文件>         查看文件内容");
@@ -179,6 +184,7 @@ fn cmd_help() {
     tprintln!("  color <fg> <bg>    Set color (0-15)", "  color <前景> <背景> 设置颜色(0-15)");
     tprintln!("  banner             Redraw banner", "  banner             重绘横幅");
     tprintln!("  setup              Re-run setup wizard", "  setup              重新运行安装向导");
+    tprintln!("  bootinstall        (Re)install disk bootloader & system files", "  bootinstall        (重新)安装硬盘引导程序与系统文件");
     tprintln!("  reboot             Reboot system", "  reboot             重启系统");
     tprintln!("  halt               Halt system", "  halt               停机");
     println!("");
@@ -193,10 +199,78 @@ fn cmd_about() {
     tprintln!("  - Author  : MEME-LMXDG", "  - 开发者  : MEME-LMXDG");
     tprintln!("  - Arch    : x86_64 (64-bit)", "  - 架构    : x86_64 (64位)");
     tprintln!("  - Boot    : GRUB 2 (Multiboot2)", "  - 引导    : GRUB 2 (Multiboot2)");
-    tprintln!("  - Display : VGA text mode 80x25 (English)", "  - 显示    : VGA 文本模式 80x25");
+    tprintln!("  - Display : VGA text mode + adaptive resolution", "  - 显示    : VGA 文本模式 + 自适应分辨率");
+    tprintln!("  - USB     : 1.0 / 1.1 / 2.0 / 3.0 / 3.1 / 3.2 host compatible", "  - USB     : 兼容 USB 1.0/1.1/2.0/3.0/3.1/3.2 主控");
     tprintln!("  - Input   : PS/2 keyboard", "  - 输入    : PS/2 键盘");
     tprintln!("  - Storage : ATA PIO hard disk (persistent config)", "  - 存储    : ATA PIO 硬盘(配置持久化)");
     tprintln!("  - Core    : no_std bare-metal kernel", "  - 内核    : no_std 裸机内核");
+}
+
+fn cmd_bootinstall() {
+    println!("");
+    vga::with_writer(|w| {
+        w.set_color(Color::LightBlue, Color::Black);
+        w.put_str(tr!("  === Disk Boot Installer ===\n", "  === 硬盘引导安装 ===\n"));
+        w.set_color(Color::White, Color::Black);
+    });
+    tprintln!("  Writing MBR, stage-2 bootloader and kernel to disk...",
+              "  正在写入 MBR、第二阶段引导程序与内核...");
+    match crate::installer::install() {
+        Ok(n) => {
+            vga::with_writer(|w| {
+                w.set_color(Color::LightGreen, Color::Black);
+                let _ = w.write_fmt(format_args!("  SUCCESS: {} sectors written.\n", n));
+                w.set_color(Color::White, Color::Black);
+            });
+            tprintln!("  The hard disk can now boot MLOS without the ISO.",
+                      "  硬盘现在可以直接引导 MLOS，无需 ISO。");
+        }
+        Err(e) => {
+            vga::with_writer(|w| w.set_color(Color::LightRed, Color::Black));
+            tprintln!("  FAILED: {}", "  失败: {}", e);
+            vga::with_writer(|w| w.set_color(Color::White, Color::Black));
+        }
+    }
+    println!("");
+}
+
+fn cmd_usb() {
+    println!("");
+    vga::with_writer(|w| {
+        w.set_color(Color::LightBlue, Color::Black);
+        w.put_str(tr!("  === USB Compatibility (1.0 - 3.2) ===\n", "  === USB 兼容性 (1.0 - 3.2) ===\n"));
+        w.set_color(Color::White, Color::Black);
+    });
+    tprintln!("  Support      : UHCI / OHCI (1.0, 1.1), EHCI (2.0), xHCI (3.0/3.1/3.2)",
+              "  支持范围     : UHCI/OHCI (1.0, 1.1), EHCI (2.0), xHCI (3.0/3.1/3.2)");
+    if !crate::usb::is_scanned() {
+        tprintln!("  (scanning...)", "  (扫描中...)");
+    }
+    let n = crate::usb::scan();
+    if n == 0 {
+        tprintln!("  Controllers  : none detected on the PCI bus",
+                  "  控制器       : PCI 总线上未检测到 USB 主控");
+    } else {
+        tprintln!("  Controllers  : {}", "  控制器       : {}", n);
+        crate::usb::each(|c| {
+            tprintln!("   - {} at {:X}:{:X}.{}  {}",
+                      "   - {} 位于 {:X}:{:X}.{}  {}",
+                      c.kind, c.bus, c.device, c.function, c.speed.label());
+        });
+    }
+    println!("");
+}
+
+fn cmd_resolution() {
+    println!("");
+    vga::with_writer(|w| {
+        w.set_color(Color::LightBlue, Color::Black);
+        w.put_str(tr!("  === Display Resolution (adaptive) ===\n", "  === 显示分辨率 (自适应) ===\n"));
+        w.set_color(Color::White, Color::Black);
+    });
+    let mut buf = alloc::string::String::new();
+    crate::video::report(&mut buf);
+    println!("{}", buf);
 }
 
 fn cmd_mem() {
@@ -225,6 +299,8 @@ fn cmd_disk() {
             }
             None => tprintln!("  Config      : not found / invalid", "  配置        : 未找到或无效"),
         }
+        let st = crate::installer::status_line();
+        println!("{}", st);
     } else {
         tprintln!("  No hard disk detected.", "  未检测到硬盘。");
     }

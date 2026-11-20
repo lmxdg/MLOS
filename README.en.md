@@ -30,6 +30,29 @@
 - User configuration written to disk sector LBA 1 with magic + checksum
 - MiniFS file store for user files
 
+### Disk self-boot installation (no ISO needed after install)
+- When the setup wizard finishes, MLOS writes the **complete system to the hard disk**:
+  an MBR boot sector, a custom Stage-2 bootloader (builds the Multiboot2 info) and the kernel image
+- After installation the machine boots MLOS **directly from the hard disk - the ISO is no longer needed**
+  (`bootinstall` re-installs / repairs at any time)
+- Custom two-stage bootloader: MBR (EDD reads) -> Stage 2 (loads kernel, e820 map, protected mode trampoline)
+
+### Boot animation & system logo
+- Boot shows a pixel-art MLOS logo (line-by-line fade-in animation) plus the developer signature
+- Then a **15-second boot progress bar** plays with staged messages:
+  CPU/memory -> adaptive display detection -> PCI / USB bus scan -> USB controller init -> disk mount -> user config -> shell
+
+### USB compatibility (USB 1.0 - 3.2)
+- PCI bus enumeration detects every USB host-controller class:
+  **UHCI / OHCI** (USB 1.0 / 1.1), **EHCI** (USB 2.0), **xHCI** (USB 3.0 / 3.1 / 3.2)
+- The `usb` command lists detected controllers (type, PCI location, speed class) and compatibility info
+
+### Adaptive resolution
+- Display metrics are auto-detected at boot: firmware framebuffer (Multiboot2) + VGA CRTC register probing
+  for the real console geometry
+- The `resolution` command reports adapter capability and the active console mode; GUI layout follows
+  the detected display size
+
 ### Performance monitor (`perf`)
 - **CPU**: vendor string via CPUID, TSC frequency calibrated against the PIT, live TSC cycle count
 - **Memory**: total usable, kernel image footprint, estimated free memory and usage %
@@ -75,6 +98,12 @@
 | GUI Start menu | ![gui menu](screenshots/gui_menu.png) |
 | GUI performance monitor | ![gui perf](screenshots/gui_perf.png) |
 | GUI file viewer | ![gui files](screenshots/gui_files.png) |
+| Boot logo (animated) | ![v105 logo](screenshots/v105_logo.png) |
+| 15-second boot progress bar | ![v105 bar](screenshots/v105_bar.png) |
+| Setup wizard | ![v105 wizard](screenshots/v105_wizard.png) |
+| System written to disk (ISO-free boot) | ![v105 install](screenshots/v105_install.png) |
+| Boot from hard disk -> login | ![v105 bootlogin](screenshots/v105_bootlogin.png) |
+| Boot from hard disk -> shell | ![v105 bootshell](screenshots/v105_bootshell.png) |
 
 ---
 
@@ -82,10 +111,11 @@
 
 ```
 help    clear   echo    version about   whoami  uname   date    mem
-perf    ls      cat     write   rm      disk    update  color   banner
-setup   reboot  halt    games   bomb    guess   rps     tools   calc
-base    prime   hash    rand    ascii
-```
+perf    ls      cat     write   rm      disk    update  usb     resolution
+setup   bootinstall  reboot  halt  games  bomb  guess  rps
+tools   calc    base    prime   hash    rand    ascii
+
+See `help` for the full list.
 
 ---
 

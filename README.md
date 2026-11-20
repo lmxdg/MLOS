@@ -20,6 +20,11 @@
 - PS/2 键盘驱动，完整美式布局（Shift、退格、回车）
 - 通过 Multiboot2 内存映射检测可用内存
 
+### 启动动画与系统 LOGO
+- 开机显示 MLOS 像素风 LOGO（逐行动画淡入）与开发者署名
+- 随后播放 **15 秒启动进度条**，分阶段显示初始化进度：
+  CPU/内存 → 自适应分辨率检测 → PCI / USB 总线扫描 → USB 控制器初始化 → 硬盘挂载 → 用户配置 → Shell
+
 ### 安装与登录
 - 首次启动进入安装向导：设置用户名与密码
 - 密码以 FNV-1a 哈希写入硬盘，绝不存明文
@@ -29,6 +34,20 @@
 - ATA PIO（LBA28）驱动，操作主硬盘
 - 用户配置写入 LBA 1 扇区（魔数 + 校验和）
 - MiniFS 文件存储区，可在硬盘中保存用户文件
+
+### 硬盘自引导安装（免 ISO 开机）
+- 安装向导完成时自动把 **完整系统写入硬盘**：MBR 引导扇区、自研 Stage2 引导程序（含 Multiboot2 信息构建）、内核镜像
+- 安装后可直接从硬盘启动 MLOS，**不再需要 ISO**（`bootinstall` 命令可随时重装/修复）
+- 自研双阶段引导：MBR（EDD 读取）→ Stage2（加载内核、e820 内存图、进入保护模式并跳转）
+
+### USB 兼容（USB 1.0 - 3.2）
+- PCI 总线枚举，自动识别全部 USB 主控类型：
+  **UHCI / OHCI**（USB 1.0 / 1.1）、**EHCI**（USB 2.0）、**xHCI**（USB 3.0 / 3.1 / 3.2）
+- `usb` 命令列出检测到的控制器（类型、PCI 位置、速率等级）与兼容性说明
+
+### 自适应分辨率
+- 启动时自动检测显示参数：固件 framebuffer（Multiboot2）+ VGA CRTC 寄存器探测实际控制台行列
+- `resolution` 命令显示适配器能力与当前控制台模式，GUI 布局跟随检测到的显示尺寸
 
 ### 性能监视器（`perf`）
 - **CPU**：通过 CPUID 读取厂商信息，TSC 频率经 PIT 校准，实时周期计数
@@ -75,6 +94,12 @@
 | GUI 开始菜单 | ![gui menu](screenshots/gui_menu.png) |
 | GUI 性能监视器 | ![gui perf](screenshots/gui_perf.png) |
 | GUI 文件查看 | ![gui files](screenshots/gui_files.png) |
+| 启动 LOGO（逐行动画） | ![v105 logo](screenshots/v105_logo.png) |
+| 15 秒启动进度条 | ![v105 bar](screenshots/v105_bar.png) |
+| 安装向导 | ![v105 wizard](screenshots/v105_wizard.png) |
+| 系统写入硬盘（免 ISO 引导） | ![v105 install](screenshots/v105_install.png) |
+| 硬盘直接启动 → 登录 | ![v105 bootlogin](screenshots/v105_bootlogin.png) |
+| 硬盘直接启动 → Shell | ![v105 bootshell](screenshots/v105_bootshell.png) |
 
 ---
 
@@ -82,12 +107,11 @@
 
 ```
 help    clear   echo    version about   whoami  uname   date    mem
-perf    ls      cat     write   rm      disk    update  color   banner
-setup   reboot  halt    games   bomb    guess   rps     tools   calc
-perf    ls      cat     write   rm      disk    update  color   banner
-help 的完整列表见 help 命令
-base    prime   hash    rand    ascii
-```
+perf    ls      cat     write   rm      disk    update  usb     resolution
+setup   bootinstall  reboot  halt  games  bomb  guess  rps
+tools   calc    base    prime   hash    rand    ascii
+
+完整列表见 `help` 命令。
 
 ---
 
@@ -218,6 +242,9 @@ MLOS/
 | 3   | 远端版本信息（魔数 `UPDT`，由 `tools/check_update.sh` 写入） |
 | 4   | MiniFS 目录扇区（魔数 `MFSD`，12 个条目） |
 | 5+  | MiniFS 文件数据，每槽位 8 个扇区（4 KB） |
+| 2048 | MLOS 磁盘引导 Stage2（16 KB，由安装程序写入） |
+| 4096 | 内核镜像头（魔数 `MLBX`、扇区数、入口偏移） |
+| 4097+ | 内核扁平镜像（安装程序从运行中的内核转储） |
 
 ## 许可证
 

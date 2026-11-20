@@ -9,6 +9,7 @@ mod boot;
 mod fs;
 mod games;
 mod gui;
+mod installer;
 mod input;
 mod io;
 mod keyboard;
@@ -18,8 +19,11 @@ mod setup;
 mod shell;
 mod storage;
 mod tools;
+mod splash;
 mod update;
+mod usb;
 mod vga;
+mod video;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
@@ -31,15 +35,22 @@ pub static TOTAL_MEMORY: AtomicU64 = AtomicU64::new(0);
 
 #[no_mangle]
 pub extern "C" fn kernel_main(_magic: u64, mbi: u64) -> ! {
+    // boot splash: logo animation + 15 second progress bar (also scans USB)
+    splash::run();
+
     let mem_kib = parse_memory_map(mbi);
     TOTAL_MEMORY.store(mem_kib, Ordering::Relaxed);
+    video::init(mbi);
 
     print_banner();
     vga::with_writer(|w| {
         w.set_color(Color::LightGray, Color::Black);
         w.put_str("  Architecture : x86_64 (64-bit)\n");
         w.put_str("  Bootloader   : GRUB 2 (Multiboot2)\n");
-        w.put_str("  Display      : VGA text mode 80x25\n");
+        w.put_str("  Display      : ");
+        w.put_str(video::describe());
+        w.put_str("\n");
+        w.put_str("  USB          : 1.0 / 1.1 / 2.0 / 3.0 / 3.1 / 3.2 host ready\n");
         let _ = w.write_fmt(format_args!("  Memory       : {} MiB usable\n", mem_kib / 1024));
         let _ = w.write_fmt(format_args!("  Build time   : {}\n", env!("BUILD_TIME")));
         w.set_color(Color::Yellow, Color::Black);
@@ -78,7 +89,7 @@ pub fn print_banner() {
         w.put_str("  | |  | | |_| | |__| |_| |\n");
         w.put_str("  |_|  |_|\\___/|____|\\___/ \n");
         w.set_color(Color::LightGreen, Color::Black);
-        w.put_str("  MLOS - Minimal Light Operating System v1.0.3\n");
+        w.put_str("  MLOS - Minimal Light Operating System v1.0.5\n");
         w.set_color(Color::DarkGray, Color::Black);
         w.put_str("  --------------------------------------------------------\n");
     });

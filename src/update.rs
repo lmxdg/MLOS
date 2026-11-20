@@ -10,13 +10,13 @@
 //! 扇区布局（LBA 3，512 字节）：
 //!   [0..4)    魔数 "UPDT" = 0x54445055
 //!   [4..8)    版本号长度 N（u32 小端）
-//!   [8..8+N)  版本字符串（ASCII，如 "1.0.3"）
+//!   [8..8+N)  版本字符串（ASCII，如 "1.0.5"）
 //!   [508..512) 校验和（前 508 字节按 u16 求和）
 
 use crate::ata;
 
 /// 本地版本号（与 Cargo.toml 保持一致）
-pub const LOCAL_VERSION: &str = "1.0.3";
+pub const LOCAL_VERSION: &str = "1.0.5";
 
 /// GitHub Releases 页面
 pub const RELEASES_URL: &str = "github.com/lmxdg/MLOS/releases";

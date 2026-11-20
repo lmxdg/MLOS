@@ -122,6 +122,32 @@ pub fn run_wizard() -> Option<Config> {
         tprintln!("  WARNING: Could not verify saved data.", "  警告: 无法验证已保存的数据。");
     }
 
+    // ---- write the complete system to disk + disk bootloader ----
+    println!("");
+    vga::with_writer(|w| {
+        w.set_color(Color::LightCyan, Color::Black);
+        w.put_str(tr!("  Installing system files to hard disk...\n", "  正在将完整系统安装到硬盘...\n"));
+        w.put_str(tr!("  (bootloader + kernel - you can boot without the ISO)\n", "  (引导程序 + 内核，之后无需 ISO 即可开机)\n"));
+        w.set_color(Color::White, Color::Black);
+    });
+    match crate::installer::install() {
+        Ok(n) => {
+            vga::with_writer(|w| {
+                w.set_color(Color::LightGreen, Color::Black);
+                let _ = w.write_fmt(format_args!("  Disk boot installed: {} sectors written.\n", n));
+                w.set_color(Color::White, Color::Black);
+            });
+        }
+        Err(e) => {
+            vga::with_writer(|w| {
+                w.set_color(Color::LightRed, Color::Black);
+                let _ = w.write_fmt(format_args!("  Disk boot install FAILED: {}\n", e));
+                let _ = w.write_fmt(format_args!("  (the ISO will still be needed to boot)\n"));
+                w.set_color(Color::White, Color::Black);
+            });
+        }
+    }
+
     println!("");
     vga::with_writer(|w| {
         w.set_color(Color::LightGreen, Color::Black);

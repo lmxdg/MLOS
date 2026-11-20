@@ -8,7 +8,11 @@ DISKSZ := 16M
 
 all: iso disk
 
-kernel:
+boot:
+	nasm -f bin boot/mbr.asm -o boot/mbr.bin
+	nasm -f bin boot/stage2.asm -o boot/stage2.bin
+
+kernel: boot
 	RUSTC_BOOTSTRAP=1 cargo build --release
 
 iso: kernel

@@ -23,6 +23,7 @@ enum WinKind {
     Files,
     View,
     About,
+    Usb,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -103,9 +104,10 @@ struct Gui {
     view_len: usize,
 }
 
-const MENU_ITEMS: [&str; 4] = [
+const MENU_ITEMS: [&str; 5] = [
     "Performance Monitor",
     "File Explorer",
+    "USB Devices",
     "About MLOS",
     "Exit to Shell",
 ];
@@ -192,7 +194,8 @@ pub fn run() {
                     match g.menu_sel {
                         0 => open_window(&mut g, WinKind::Perf, "Performance Monitor"),
                         1 => open_window(&mut g, WinKind::Files, "File Explorer"),
-                        2 => open_window(&mut g, WinKind::About, "About MLOS"),
+                        2 => open_window(&mut g, WinKind::Usb, "USB Devices"),
+                        3 => open_window(&mut g, WinKind::About, "About MLOS"),
                         _ => exit = true,
                     }
                 } else if let Some(win) = g.wins[g.focused] {
@@ -293,8 +296,51 @@ fn nth_file(i: usize) -> Option<&'static str> {
 
 // ---------------- drawing ----------------
 
+fn usb_line(r: usize) -> Option<String> {
+    let n = crate::usb::count();
+    let text = match r {
+        1 => {
+            if !crate::usb::is_scanned() {
+                format!(" Bus not scanned yet (run at boot splash).")
+            } else if n == 0 {
+                format!(" No USB host controller detected.")
+            } else {
+                format!(" {} controller(s) found:", n)
+            }
+        }
+        _ => {
+            let mut idx = 0usize;
+            let mut out: Option<String> = None;
+            crate::usb::each(|c| {
+                idx += 1;
+                let row = 3 + (idx - 1) * 2;
+                if row == r + 1 {
+                    out = Some(format!(" [{} {:X}:{:X}.{}] {}", c.kind, c.bus, c.device, c.function, c.speed.label()));
+                }
+            });
+            match out {
+                Some(t) => t,
+                None => {
+                    if r == 9 {
+                        " Compatibility: USB 1.0/1.1/2.0/3.0/3.1/3.2".to_string()
+                    } else if r == 10 {
+                        " (UHCI / OHCI / EHCI / xHCI host interfaces)".to_string()
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+    };
+    Some(text)
+}
+
 fn draw(g: &Gui) {
     let mut scr = Screen::new();
+
+    // desktop header (wallpaper title)
+    scr.text(0, 1, "MLOS Desktop", Color::LightGray, Color::Blue);
+    scr.text(0, 16, "USB 1.0-3.2 ready | adaptive resolution", Color::Cyan, Color::Blue);
 
     // windows (tiled)
     for (i, win) in g.wins.iter().enumerate() {
@@ -345,7 +391,9 @@ fn draw(g: &Gui) {
             }
         }
     }
-    scr.text(TASKBAR_ROW, WIDTH - 21, "MLOS GUI [EXPERIMENTAL]", Color::Yellow, tb_bg);
+    let n = crate::usb::count();
+    let info = format!("USB:{} [EXPERIMENTAL]", n);
+    scr.text(TASKBAR_ROW, WIDTH - 1 - info.len(), &info, Color::Yellow, tb_bg);
 
     scr.flush();
 }
@@ -360,16 +408,25 @@ fn draw_window(scr: &mut Screen, g: &Gui, win: &Window, focused: bool) {
     let (b_fg, b_bg) = (Color::LightGray, Color::Black);
     let bd = if focused { Color::White } else { Color::DarkGray };
 
-    // title bar
-    scr.fill(y, x, WIN_W, b'-', t_fg, t_bg);
+    // title bar (double-line corners when focused)
+    let (corner_tl, corner_tr, corner_bl, corner_br, vert) = if focused {
+        (b'\xC9', b'\xBB', b'\xC8', b'\xBC', b'\xBA')
+    } else {
+        (b'+', b'+', b'+', b'+', b'|')
+    };
+    scr.fill(y, x + 1, WIN_W - 2, b'\xCD', t_fg, t_bg);
+    scr.put(y, x, corner_tl, t_fg, t_bg);
+    scr.put(y, x + WIN_W - 1, corner_tr, t_fg, t_bg);
     let label = format!("[ {} ]", win.title);
-    scr.text(y, x + 1, &label, t_fg, t_bg);
+    scr.text(y, x + 2, &label, t_fg, t_bg);
+    // close hint
+    scr.text(y, x + WIN_W - 5, " X ", t_fg, t_bg);
 
     // body frame
     for r in 1..WIN_H - 1 {
-        scr.fill(y + r, x, WIN_W, b' ', b_fg, b_bg);
-        scr.put(y + r, x, b'|', bd, b_bg);
-        scr.put(y + r, x + WIN_W - 1, b'|', bd, b_bg);
+        scr.fill(y + r, x + 1, WIN_W - 2, b' ', b_fg, b_bg);
+        scr.put(y + r, x, vert, bd, b_bg);
+        scr.put(y + r, x + WIN_W - 1, vert, bd, b_bg);
         // content line
         let inner = WIN_W - 4;
         let line = match win.kind {
@@ -377,6 +434,7 @@ fn draw_window(scr: &mut Screen, g: &Gui, win: &Window, focused: bool) {
             WinKind::About => about_line(r - 1),
             WinKind::Files => files_line(g, r - 1),
             WinKind::View => view_line(g, r - 1, inner),
+            WinKind::Usb => usb_line(r - 1),
         };
         if let Some(text) = line {
             let t: String = text.chars().take(inner).collect();
@@ -384,7 +442,9 @@ fn draw_window(scr: &mut Screen, g: &Gui, win: &Window, focused: bool) {
         }
     }
     // bottom border
-    scr.fill(y + WIN_H - 1, x, WIN_W, b'-', bd, b_bg);
+    scr.put(y + WIN_H - 1, x, corner_bl, bd, b_bg);
+    scr.fill(y + WIN_H - 1, x + 1, WIN_W - 2, b'\xCD', bd, b_bg);
+    scr.put(y + WIN_H - 1, x + WIN_W - 1, corner_br, bd, b_bg);
 }
 
 fn perf_line(r: usize, _inner: usize) -> Option<String> {
