@@ -1,5 +1,5 @@
 //! VGA text-mode terminal (80x25, framebuffer 0xB8000, CP437).
-//! English-only output for MLOS v1.0.2.
+//! English-only output for MLOS v1.0.3.
 
 use core::fmt;
 
