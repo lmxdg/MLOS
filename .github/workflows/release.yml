@@ -55,37 +55,39 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.2
-          name: MLOS v1.0.2
+          tag_name: v1.0.3
+          name: MLOS v1.0.3
           body: |
-            ## MLOS v1.0.2 - Minimal Light Operating System
+            ## MLOS v1.0.1 - Minimal Light Operating System
 
-            MLOS is a small 64-bit operating system written from scratch in Rust, delivered as a bootable ISO image.
+            MLOS 是一个用 Rust 从零编写的 64 位操作系统，以可引导 ISO 镜像交付。
+            v1.0.1 新增**双渲染引擎**与**中文显示**，可在两种渲染方式间自由切换。
 
-            ### New in v1.0.2
-            - **Performance monitor** (`perf`): CPU status (vendor via CPUID, TSC frequency calibrated against the PIT), memory usage, disk usage
-            - **File browser** (`ls` / `cat` / `write` / `rm`): MiniFS file store on raw disk sectors — browse, read and edit files on the hard disk
-            - English-only UI (dual-render / CJK support removed for a leaner kernel)
+            ### 新特性（v1.0.1）
+            - **双渲染引擎**：`render text` 英文文本模式 / `render gfx` 中文图形模式，随时切换
+            - **中文显示**：VGA 模式 13h + 内嵌 16×16 中文点阵字库（618 字形），UTF-8 渲染
+            - **在线更新检测**：`update` 命令对比本地版本与 GitHub 最新版本（经主机脚本写入硬盘桥接）
+            - 全界面双语化：游戏 / 工具 / 安装向导 / 登录均支持中英文
 
-            ### Core features
-            - no_std bare-metal kernel, Multiboot2 + GRUB 2 boot, 32→64-bit long mode switch
-            - PS/2 keyboard, VGA text display, memory detection
-            - First-boot setup wizard: username & password (FNV-1a hashed)
-            - ATA PIO disk driver; user config persisted to disk
-            - Online update check (`update`), games (Number Bomb / Guess Number / RPS), tools (calc / base / prime / hash / rand / ascii)
+            ### 核心特性
+            - no_std 裸机内核，Multiboot2 + GRUB 2 引导，32→64 位长模式切换
+            - PS/2 键盘、VGA 显示、内存检测
+            - 首次启动安装向导：设置用户名与密码（FNV-1a 哈希存储）
+            - ATA PIO 硬盘驱动，用户配置写入硬盘 LBA1 持久化
+            - 小游戏：数字炸弹 / 猜数字 / 石头剪刀布
+            - 实用工具：计算器 / 进制转换 / 素数 / 哈希 / 随机数 / ASCII
 
-            ### Download
-            - `MLOS.iso` - bootable ISO image (BIOS mode)
+            ### 下载
+            - `MLOS.iso` - 可引导 ISO 镜像（BIOS 模式）
 
-            ### Run
+            ### 运行
             ```bash
-            qemu-img create -f raw mlos-disk.img 16M
             qemu-system-x86_64 -cdrom MLOS.iso -m 128M -boot d -net none \
               -drive file=mlos-disk.img,format=raw,if=ide,index=0,media=disk
             ```
-            First boot runs the setup wizard; after login try `perf`, `ls`, and `update`.
+            首次启动进入安装向导；登录后在 Shell 执行 `render gfx` 看中文界面，`update` 检测更新。
 
-            > Developer: MEME-LMXDG · Uses GRUB i386-pc, BIOS boot required (not pure UEFI).
+            > 开发者：MEME-LMXDG · ISO 使用 GRUB i386-pc 引导，需 BIOS 模式（非纯 UEFI）。
           files: MLOS.iso
           generate_release_notes: false
         env:
