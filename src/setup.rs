@@ -6,7 +6,7 @@
 use crate::input::{read_line, wait_key};
 use crate::storage::{self, Config};
 use core::fmt::Write;
-use crate::{print, println};
+use crate::{print, println, tr, tprintln, tprint};
 use crate::vga::{self, Color};
 
 /// 判断是否已安装（硬盘上有有效配置）
@@ -24,12 +24,12 @@ pub fn run_wizard() -> Option<Config> {
     vga::with_writer(|w| {
         w.set_color(Color::LightCyan, Color::Black);
         w.put_str("  +--------------------------------------------------+\n");
-        w.put_str("  |        MLOS First-Time Setup Wizard             |\n");
+        w.put_str(tr!("  |        MLOS First-Time Setup Wizard             |\n", "  |        MLOS 首次安装向导                       |\n"));
         w.put_str("  +--------------------------------------------------+\n");
         w.set_color(Color::White, Color::Black);
     });
-    println!("  Welcome to MLOS! Let's set up your account.");
-    println!("  Your settings will be saved to the hard disk.\n");
+    tprintln!("  Welcome to MLOS! Let's set up your account.", "  欢迎使用 MLOS！请设置您的账户。");
+    tprintln!("  Your settings will be saved to the hard disk.\n", "  您的设置将保存到硬盘。\n");
     // 检测硬盘
     if !crate::ata::detect() {
         vga::with_writer(|w| {
@@ -37,32 +37,32 @@ pub fn run_wizard() -> Option<Config> {
             w.put_str("  ERROR: No hard disk detected!\n");
             w.set_color(Color::White, Color::Black);
         });
-        println!("  MLOS needs a hard disk to store user data.");
-        println!("  Make sure a virtual/real IDE disk is attached.");
-        println!("  Press any key to halt...");
+        tprintln!("  MLOS needs a hard disk to store user data.", "  MLOS 需要硬盘来保存用户数据。");
+        tprintln!("  Make sure a virtual/real IDE disk is attached.", "  请确保已挂载虚拟或真实 IDE 硬盘。");
+        tprintln!("  Press any key to halt...", "  按任意键停机...");
         wait_key();
         return None;
     }
-    println!("  Hard disk detected: OK\n");
+    tprintln!("  Hard disk detected: OK\n", "  硬盘检测: 正常\n");
 
     let mut buf = [0u8; 64];
 
     // 输入用户名
     let username = loop {
-        print!("  Enter username (1-16 chars): ");
+        tprint!("  Enter username (1-16 chars): ", "  输入用户名(1-16字符): ");
         let n = read_line(&mut buf, None);
         let name = core::str::from_utf8(&buf[..n]).unwrap_or("").trim();
         if name.is_empty() {
-            println!("  Username cannot be empty.");
+            tprintln!("  Username cannot be empty.", "  用户名不能为空。");
             continue;
         }
         if name.len() > 16 {
-            println!("  Username too long (max 16 chars).");
+            tprintln!("  Username too long (max 16 chars).", "  用户名太长(最多16字符)。");
             continue;
         }
         // 检查是否只包含可打印 ASCII
         if !name.bytes().all(|b| (0x20..=0x7E).contains(&b)) {
-            println!("  Username contains invalid characters.");
+            tprintln!("  Username contains invalid characters.", "  用户名包含非法字符。");
             continue;
         }
         let mut arr = [0u8; 32];
@@ -73,45 +73,45 @@ pub fn run_wizard() -> Option<Config> {
     // 输入密码 + 确认
     let pass_hash = loop {
         let mut p1buf = [0u8; 64];
-        print!("  Enter password (1-16 chars): ");
+        tprint!("  Enter password (1-16 chars): ", "  输入密码(1-16字符): ");
         let n1 = read_line(&mut p1buf, Some(b'*'));
         let p1 = core::str::from_utf8(&p1buf[..n1]).unwrap_or("").trim();
         if p1.is_empty() {
-            println!("  Password cannot be empty.");
+            tprintln!("  Password cannot be empty.", "  密码不能为空。");
             continue;
         }
         if p1.len() > 16 {
-            println!("  Password too long (max 16 chars).");
+            tprintln!("  Password too long (max 16 chars).", "  密码太长(最多16字符)。");
             continue;
         }
         let mut p2buf = [0u8; 64];
-        print!("  Confirm password: ");
+        tprint!("  Confirm password: ", "  确认密码: ");
         let n2 = read_line(&mut p2buf, Some(b'*'));
         let p2 = core::str::from_utf8(&p2buf[..n2]).unwrap_or("").trim();
         if p1 != p2 {
-            println!("  Passwords do not match. Try again.");
+            tprintln!("  Passwords do not match. Try again.", "  两次密码不一致，请重试。");
             continue;
         }
         break storage::fnv1a(p1.as_bytes());
     };
 
     // 保存到硬盘
-    print!("  Saving configuration to disk... ");
+    tprint!("  Saving configuration to disk... ", "  正在保存配置到硬盘... ");
     let cfg = Config {
         username,
         pass_hash,
         installed: true,
     };
     if storage::save(&cfg) {
-        println!("OK");
+        tprintln!("OK", "完成");
     } else {
         vga::with_writer(|w| {
             w.set_color(Color::LightRed, Color::Black);
-            w.put_str("FAILED\n");
+            w.put_str(tr!("FAILED\n", "失败\n"));
             w.set_color(Color::White, Color::Black);
         });
-        println!("  Could not write to disk. Setup cannot continue.");
-        println!("  Press any key to halt...");
+        tprintln!("  Could not write to disk. Setup cannot continue.", "  无法写入硬盘，安装无法继续。");
+        tprintln!("  Press any key to halt...", "  按任意键停机...");
         wait_key();
         return None;
     }
@@ -119,16 +119,16 @@ pub fn run_wizard() -> Option<Config> {
     // 验证读回
     let verified = storage::load().map(|c| c.installed).unwrap_or(false);
     if !verified {
-        println!("  WARNING: Could not verify saved data.");
+        tprintln!("  WARNING: Could not verify saved data.", "  警告: 无法验证已保存的数据。");
     }
 
     println!("");
     vga::with_writer(|w| {
         w.set_color(Color::LightGreen, Color::Black);
-        w.put_str("  Setup complete! Your account is ready.\n");
+        w.put_str(tr!("  Setup complete! Your account is ready.\n", "  安装完成！账户已就绪。\n"));
         w.set_color(Color::White, Color::Black);
     });
-    println!("  Press any key to continue to login...");
+    tprintln!("  Press any key to continue to login...", "  按任意键继续登录...");
     wait_key();
 
     Some(cfg)
@@ -141,7 +141,7 @@ pub fn login(cfg: &Config) -> bool {
     vga::with_writer(|w| {
         w.set_color(Color::LightCyan, Color::Black);
         w.put_str("  +--------------------------------------------------+\n");
-        w.put_str("  |                  MLOS Login                     |\n");
+        w.put_str(tr!("  |                  MLOS Login                     |\n", "  |                  MLOS 登录                      |\n"));
         w.put_str("  +--------------------------------------------------+\n");
         w.set_color(Color::White, Color::Black);
     });
@@ -151,12 +151,12 @@ pub fn login(cfg: &Config) -> bool {
 
     loop {
         let mut ubuf = [0u8; 64];
-        print!("  Username: ");
+        tprint!("  Username: ", "  用户名: ");
         let n = read_line(&mut ubuf, None);
         let user = core::str::from_utf8(&ubuf[..n]).unwrap_or("").trim();
 
         let mut pbuf = [0u8; 64];
-        print!("  Password: ");
+        tprint!("  Password: ", "  密码: ");
         let n = read_line(&mut pbuf, Some(b'*'));
         let pass = core::str::from_utf8(&pbuf[..n]).unwrap_or("").trim();
 
@@ -167,7 +167,8 @@ pub fn login(cfg: &Config) -> bool {
             println!("");
             vga::with_writer(|w| {
                 w.set_color(Color::LightGreen, Color::Black);
-                let _ = w.write_fmt(format_args!("  Welcome back, {}!\n", user));
+                let _ = w.write_fmt(format_args!("{}", tr!("  Welcome back, ", "  欢迎回来， ")));
+                let _ = w.write_fmt(format_args!("{}!\n", user));
                 w.set_color(Color::White, Color::Black);
             });
             return true;
@@ -177,13 +178,13 @@ pub fn login(cfg: &Config) -> bool {
         println!("");
         vga::with_writer(|w| {
             w.set_color(Color::LightRed, Color::Black);
-            w.put_str("  Invalid username or password.\n");
+            w.put_str(tr!("  Invalid username or password.\n", "  用户名或密码错误。\n"));
             w.set_color(Color::White, Color::Black);
         });
         if attempts >= 5 {
-            println!("  Too many failed attempts. Halting.");
+            tprintln!("  Too many failed attempts. Halting.", "  失败次数过多，系统停机。");
             return false;
         }
-        println!("  Attempts remaining: {}\n", 5 - attempts);
+        tprintln!("  Attempts remaining: {}\n", "  剩余尝试次数: {}\n", 5 - attempts);
     }
 }

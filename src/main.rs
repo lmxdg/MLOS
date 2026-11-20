@@ -13,6 +13,7 @@ mod setup;
 mod shell;
 mod storage;
 mod tools;
+mod update;
 mod vga;
 
 use core::fmt::Write;
@@ -71,9 +72,11 @@ pub fn print_banner() {
         w.set_color(Color::LightCyan, Color::Black);
         if vga::is_gfx() {
             // 中文图形模式：点阵标题
-            w.put_str("  神龙操作系统 MLOS\n");
+            w.put_str("  MLOS 操作系统\n");
             w.set_color(Color::LightGreen, Color::Black);
             w.put_str("  轻量 纯净 Rust 制造\n");
+            w.set_color(Color::Cyan, Color::Black);
+            w.put_str("  开发者 MEME-LMXDG\n");
             w.set_color(Color::LightCyan, Color::Black);
             w.put_str("  版本 v1.0.1 中文版\n");
             w.set_color(Color::DarkGray, Color::Black);

@@ -1,23 +1,24 @@
-//! 终端小游戏集合：数字炸弹、猜数字、石头剪刀布
+//! 终端小游戏集合：数字炸弹、猜数字、石头剪刀布（中英双语）
 
 use crate::input::{read_line, wait_key};
 use crate::rng::Rng;
 use core::fmt::Write;
-use crate::{println, print};
+use crate::{println, print, tr, tprintln, tprint};
 use crate::vga::{self, Color};
 
-/// 数字炸弹：1~100 中有一个"炸弹"数字，玩家输入逐步逼近，
-/// 系统提示"更安全/更危险"，踩中炸弹即失败。
+/// 数字炸弹：1~100 中有一个"炸弹"数字，玩家逐步逼近，踩中即失败。
 pub fn number_bomb() {
     println!("");
     vga::with_writer(|w| {
         w.set_color(Color::LightRed, Color::Black);
-        w.put_str("  === Number Bomb ===\n");
+        w.put_str(tr!("  === Number Bomb ===\n", "  === 数字炸弹 ===\n"));
         w.set_color(Color::White, Color::Black);
     });
-    println!("  A bomb is hidden in [1, 100]. Enter numbers to narrow it down.");
-    println!("  The closer you get to the bomb, the more dangerous it becomes.");
-    println!("  Type 'q' to quit. Good luck!\n");
+    tprintln!("  A bomb is hidden in [1,100]. Enter numbers to narrow it down.",
+              "  炸弹藏在1到100之间，输入数字逐步逼近。");
+    tprintln!("  The closer you get, the more dangerous it becomes.",
+              "  越接近炸弹越危险。");
+    tprintln!("  Type 'q' to quit. Good luck!\n", "  输入q退出，祝你好运！\n");
 
     let mut rng = Rng::new();
     let bomb = rng.range(1, 100) as u32;
@@ -25,19 +26,20 @@ pub fn number_bomb() {
     let mut tries = 0u32;
 
     loop {
-        print!("  Try #{} | Guess (1-100): ", tries + 1);
+        tprint!("  Try #{} | Guess(1-100): ", "  第{}次 | 猜数(1-100): ", tries + 1);
         let n = read_line(&mut buf, None);
         let input = core::str::from_utf8(&buf[..n]).unwrap_or("").trim();
 
         if input.eq_ignore_ascii_case("q") || input.eq_ignore_ascii_case("quit") {
-            println!("  You chicken out. The bomb was {}.", bomb);
+            tprintln!("  You chicken out. The bomb was {}.", "  你放弃了，炸弹是{}。", bomb);
             return;
         }
 
         let guess = match parse_u32(input) {
             Some(v) if v >= 1 && v <= 100 => v,
             _ => {
-                println!("  Please enter a number between 1 and 100.");
+                tprintln!("  Please enter a number between 1 and 100.",
+                          "  请输入1到100之间的数字。");
                 continue;
             }
         };
@@ -48,38 +50,30 @@ pub fn number_bomb() {
         if diff == 0 {
             vga::with_writer(|w| {
                 w.set_color(Color::LightRed, Color::Black);
-                w.put_str("  *** BOOM! You hit the bomb! Game over. ***\n");
+                w.put_str(tr!("  *** BOOM! You hit the bomb! Game over. ***\n",
+                              "  *** 砰！你踩到炸弹了！游戏结束。***\n"));
                 w.set_color(Color::White, Color::Black);
             });
-            println!("  The bomb was {} and it took you {} tries.", bomb, tries);
-            println!("  Press any key to continue...");
+            tprintln!("  The bomb was {} and it took you {} tries.",
+                      "  炸弹是{}，你用了{}次。", bomb, tries);
+            tprintln!("  Press any key to continue...", "  按任意键继续...");
             wait_key();
             return;
         }
 
-        let danger = if diff >= 40 {
-            0
-        } else if diff >= 25 {
-            1
-        } else if diff >= 12 {
-            2
-        } else if diff >= 5 {
-            3
-        } else {
-            4
-        };
+        let danger = if diff >= 40 { 0 } else if diff >= 25 { 1 }
+                     else if diff >= 12 { 2 } else if diff >= 5 { 3 } else { 4 };
 
-        let (label, color) = match danger {
-            0 => ("SAFE ...  (far away)", Color::LightGreen),
-            1 => ("Warm ...", Color::Green),
-            2 => ("Getting warm ...", Color::Yellow),
-            3 => ("Hot! ...", Color::LightRed),
-            _ => ("VERY HOT! ...", Color::Red),
+        let (en, zh, color) = match danger {
+            0 => ("SAFE ...  (far away)", "安全...(远)", Color::LightGreen),
+            1 => ("Warm ...", "温暖...", Color::Green),
+            2 => ("Getting warm ...", "越来越热...", Color::Yellow),
+            3 => ("Hot! ...", "很烫！...", Color::LightRed),
+            _ => ("VERY HOT! ...", "非常烫！...", Color::Red),
         };
-
         vga::with_writer(|w| {
             w.set_color(color, Color::Black);
-            let _ = w.write_fmt(format_args!("  {} [distance {}]\n", label, diff));
+            tprintln!("  {} [distance {}]", "  {} [距离{}]", tr!(en, zh), diff);
             w.set_color(Color::White, Color::Black);
         });
     }
@@ -90,11 +84,12 @@ pub fn guess_number() {
     println!("");
     vga::with_writer(|w| {
         w.set_color(Color::LightCyan, Color::Black);
-        w.put_str("  === Guess the Number ===\n");
+        w.put_str(tr!("  === Guess the Number ===\n", "  === 猜数字 ===\n"));
         w.set_color(Color::White, Color::Black);
     });
-    println!("  I'm thinking of a number between 1 and 100.");
-    println!("  Type 'q' to quit.\n");
+    tprintln!("  I'm thinking of a number between 1 and 100.",
+              "  我心里想了一个1到100的数字。");
+    tprintln!("  Type 'q' to quit.\n", "  输入q退出。\n");
 
     let mut rng = Rng::new();
     let secret = rng.range(1, 100) as u32;
@@ -102,36 +97,37 @@ pub fn guess_number() {
     let mut tries = 0u32;
 
     loop {
-        print!("  Your guess: ");
+        tprint!("  Your guess: ", "  你的猜测: ");
         let n = read_line(&mut buf, None);
         let input = core::str::from_utf8(&buf[..n]).unwrap_or("").trim();
 
         if input.eq_ignore_ascii_case("q") || input.eq_ignore_ascii_case("quit") {
-            println!("  It was {}. Maybe next time!", secret);
+            tprintln!("  It was {}. Maybe next time!", "  是{}，下次加油！", secret);
             return;
         }
 
         let guess = match parse_u32(input) {
             Some(v) if v >= 1 && v <= 100 => v,
             _ => {
-                println!("  Enter a number between 1 and 100.");
+                tprintln!("  Enter a number between 1 and 100.", "  请输入1到100的数字。");
                 continue;
             }
         };
         tries += 1;
 
         if guess < secret {
-            println!("  Too small! Try higher.");
+            tprintln!("  Too small! Try higher.", "  太小了！再大点。");
         } else if guess > secret {
-            println!("  Too big! Try lower.");
+            tprintln!("  Too big! Try lower.", "  太大了！再小点。");
         } else {
             vga::with_writer(|w| {
                 w.set_color(Color::LightGreen, Color::Black);
-                w.put_str("  Correct! You got it!\n");
+                w.put_str(tr!("  Correct! You got it!\n", "  *** 猜对了！***\n"));
                 w.set_color(Color::White, Color::Black);
             });
-            println!("  The number was {} and you found it in {} tries.", secret, tries);
-            println!("  Press any key to continue...");
+            tprintln!("  The number was {} and you found it in {} tries.",
+                      "  数字是{}，你用了{}次猜中。", secret, tries);
+            tprintln!("  Press any key to continue...", "  按任意键继续...");
             wait_key();
             return;
         }
@@ -143,11 +139,12 @@ pub fn rock_paper_scissors() {
     println!("");
     vga::with_writer(|w| {
         w.set_color(Color::Pink, Color::Black);
-        w.put_str("  === Rock Paper Scissors ===\n");
+        w.put_str(tr!("  === Rock Paper Scissors ===\n", "  === 石头剪刀布 ===\n"));
         w.set_color(Color::White, Color::Black);
     });
-    println!("  Type r (rock), p (paper), s (scissors), or q to quit.");
-    println!("  First to 3 wins!\n");
+    tprintln!("  Type r(rock), p(paper), s(scissors), or q to quit.",
+              "  输入r(石头)p(布)s(剪刀)q(退出)。");
+    tprintln!("  First to 3 wins!\n", "  先赢三局者获胜！\n");
 
     let mut rng = Rng::new();
     let mut buf = [0u8; 32];
@@ -155,7 +152,7 @@ pub fn rock_paper_scissors() {
     let mut cpu_wins = 0u32;
 
     while player_wins < 3 && cpu_wins < 3 {
-        print!("  Your move [r/p/s/q]: ");
+        tprint!("  Your move [r/p/s/q]: ", "  你的出招[r/p/s/q]: ");
         let n = read_line(&mut buf, None);
         let input = core::str::from_utf8(&buf[..n]).unwrap_or("").trim();
         let first = input.as_bytes().first().copied().unwrap_or(0) as char;
@@ -165,42 +162,43 @@ pub fn rock_paper_scissors() {
             'p' => 1,
             's' => 2,
             'q' => {
-                println!("  Quit. Score: You {} - {} CPU", player_wins, cpu_wins);
+                tprintln!("  Quit. Score: You {} - {} CPU", "  退出。比分 你{} - {}电脑", player_wins, cpu_wins);
                 return;
             }
             _ => {
-                println!("  Invalid move. Use r, p, s, or q.");
+                tprintln!("  Invalid move. Use r, p, s, or q.", "  无效出招，请用r、p、s或q。");
                 continue;
             }
         };
 
         let cpu = rng.range(0, 3) as usize;
-        let names = ["rock", "paper", "scissors"];
-        println!("  You: {}   CPU: {}", names[player], names[cpu]);
+        let en_names = ["rock", "paper", "scissors"];
+        let zh_names = ["石头", "布", "剪刀"];
+        tprintln!("  You: {}   CPU: {}", "  你: {}   电脑: {}",
+                  tr!(en_names[player], zh_names[player]), tr!(en_names[cpu], zh_names[cpu]));
 
-        // (player + 1) % 3 beats player; 若 cpu == (player+1)%3 则 CPU 胜
         if player == cpu {
-            println!("  -> Draw!");
+            tprintln!("  -> Draw!", "  -> 平局！");
         } else if cpu == (player + 1) % 3 {
-            println!("  -> CPU wins this round!");
+            tprintln!("  -> CPU wins this round!", "  -> 电脑赢这局！");
             cpu_wins += 1;
         } else {
-            println!("  -> You win this round!");
+            tprintln!("  -> You win this round!", "  -> 你赢这局！");
             player_wins += 1;
         }
-        println!("  Score: You {} - {} CPU\n", player_wins, cpu_wins);
+        tprintln!("  Score: You {} - {} CPU\n", "  比分: 你{} - {}电脑\n", player_wins, cpu_wins);
     }
 
     if player_wins >= 3 {
         vga::with_writer(|w| {
             w.set_color(Color::LightGreen, Color::Black);
-            w.put_str("  *** You win the match! ***\n");
+            w.put_str(tr!("  *** You win the match! ***\n", "  *** 你赢下比赛！***\n"));
             w.set_color(Color::White, Color::Black);
         });
     } else {
-        println!("  CPU wins the match. Try again!");
+        tprintln!("  CPU wins the match. Try again!", "  电脑赢了比赛，再接再厉！");
     }
-    println!("  Press any key to continue...");
+    tprintln!("  Press any key to continue...", "  按任意键继续...");
     wait_key();
 }
 
@@ -209,16 +207,16 @@ pub fn menu() {
     println!("");
     vga::with_writer(|w| {
         w.set_color(Color::Pink, Color::Black);
-        w.put_str("  === Game Center ===\n");
+        w.put_str(tr!("  === Game Center ===\n", "  === 游戏中心 ===\n"));
         w.set_color(Color::White, Color::Black);
     });
-    println!("  bomb    Number Bomb - find the bomb safely");
-    println!("  guess   Guess the Number - classic 1-100");
-    println!("  rps     Rock Paper Scissors - best of 5");
-    println!("  back    Return to shell");
+    tprintln!("  bomb    Number Bomb - find the bomb safely", "  bomb    数字炸弹 - 安全逼近炸弹");
+    tprintln!("  guess   Guess the Number - classic 1-100", "  guess   猜数字 - 经典1到100");
+    tprintln!("  rps     Rock Paper Scissors - best of 5", "  rps     石头剪刀布 - 五局三胜");
+    tprintln!("  back    Return to shell", "  back    返回命令行");
 }
 
-/// 解析 u32（简单实现）
+/// 解析 u32
 fn parse_u32(s: &str) -> Option<u32> {
     if s.is_empty() {
         return None;

@@ -3,7 +3,7 @@
 use crate::input::read_line;
 use crate::rng::Rng;
 use crate::storage::fnv1a;
-use crate::{print, println};
+use crate::{print, println, tr, tprintln, tprint};
 use crate::vga::{self, Color};
 use core::fmt::Write;
 
@@ -18,7 +18,7 @@ pub fn calculator(expr: &str) {
                 w.set_color(Color::White, Color::Black);
             });
         }
-        Err(msg) => println!("  Error: {}", msg),
+        Err(msg) => tprintln!("  Error: {}", "  错误: {}", msg),
     }
 }
 
@@ -27,10 +27,11 @@ pub fn calculator_interactive() {
     println!("");
     vga::with_writer(|w| {
         w.set_color(Color::LightBlue, Color::Black);
-        w.put_str("  === Calculator ===\n");
+        w.put_str(tr!("  === Calculator ===\n", "  === 计算器 ===\n"));
         w.set_color(Color::White, Color::Black);
     });
-    println!("  Supports + - * / and parentheses. Type 'q' to quit.\n");
+    tprintln!("  Supports + - * / and parentheses. Type 'q' to quit.\n",
+              "  支持 + - * / 和括号，输入q退出。\n");
     let mut buf = [0u8; 128];
     loop {
         print!("  calc> ");
@@ -54,11 +55,11 @@ pub fn base_convert(arg: &str) {
         println!("");
         vga::with_writer(|w| {
             w.set_color(Color::LightBlue, Color::Black);
-            w.put_str("  === Base Converter ===\n");
+            w.put_str(tr!("  === Base Converter ===\n", "  === 进制转换 ===\n"));
             w.set_color(Color::White, Color::Black);
         });
         let mut buf = [0u8; 64];
-        print!("  Enter a decimal number (or 'q'): ");
+        tprint!("  Enter a decimal number (or 'q'): ", "  输入十进制数(或q): ");
         let n = read_line(&mut buf, None);
         let s = core::str::from_utf8(&buf[..n]).unwrap_or("").trim();
         if s.eq_ignore_ascii_case("q") {
@@ -74,21 +75,21 @@ fn print_number(s: &str) {
     let val = match parse_u64(s) {
         Some(v) => v,
         None => {
-            println!("  Invalid number: {}", s);
+            tprintln!("  Invalid number: {}", "  无效数字: {}", s);
             return;
         }
     };
-    println!("  DEC : {}", val);
-    println!("  HEX : 0x{}", to_radix(val, 16).as_str());
-    println!("  BIN : 0b{}", to_radix(val, 2).as_str());
-    println!("  OCT : 0o{}", to_radix(val, 8).as_str());
+    tprintln!("  DEC : {}", "  十进制 : {}", val);
+    tprintln!("  HEX : 0x{}", "  十六进制 : 0x{}", to_radix(val, 16).as_str());
+    tprintln!("  BIN : 0b{}", "  二进制 : 0b{}", to_radix(val, 2).as_str());
+    tprintln!("  OCT : 0o{}", "  八进制 : 0o{}", to_radix(val, 8).as_str());
 }
 
 /// 素数判断
 pub fn prime_check(arg: &str) {
     let mut buf = [0u8; 64];
     let s = if arg.trim().is_empty() {
-        print!("  Enter a number: ");
+        tprint!("  Enter a number: ", "  输入数字: ");
         let n = read_line(&mut buf, None);
         core::str::from_utf8(&buf[..n]).unwrap_or("").trim()
     } else {
@@ -99,14 +100,14 @@ pub fn prime_check(arg: &str) {
             if is_prime(n) {
                 vga::with_writer(|w| {
                     w.set_color(Color::LightGreen, Color::Black);
-                    let _ = w.write_fmt(format_args!("  {} is PRIME\n", n));
-                    w.set_color(Color::White, Color::Black);
                 });
+                tprintln!("  {} is PRIME", "  {} 是素数", n);
+                vga::with_writer(|w| { w.set_color(Color::White, Color::Black); });
             } else {
-                println!("  {} is not prime", n);
+                tprintln!("  {} is not prime", "  {} 不是素数", n);
             }
         }
-        None => println!("  Invalid number: {}", s),
+        None => tprintln!("  Invalid number: {}", "  无效数字: {}", s),
     }
 }
 
@@ -114,7 +115,7 @@ pub fn prime_check(arg: &str) {
 pub fn hash_text(arg: &str) {
     let mut buf = [0u8; 128];
     let s = if arg.trim().is_empty() {
-        print!("  Enter text to hash: ");
+        tprint!("  Enter text to hash: ", "  输入要哈希的文本: ");
         let n = read_line(&mut buf, None);
         core::str::from_utf8(&buf[..n]).unwrap_or("").trim()
     } else {
@@ -129,11 +130,9 @@ pub fn random_number(arg: &str) {
     let max = parse_u64(arg.trim()).unwrap_or(100);
     let mut rng = Rng::new();
     let val = rng.range(1, max.max(2));
-    vga::with_writer(|w| {
-        w.set_color(Color::Yellow, Color::Black);
-        let _ = w.write_fmt(format_args!("  Random [1, {}]: {}\n", max.max(2), val));
-        w.set_color(Color::White, Color::Black);
-    });
+    vga::with_writer(|w| { w.set_color(Color::Yellow, Color::Black); });
+    tprintln!("  Random [1, {}]: {}", "  随机数 [1, {}]: {}", max.max(2), val);
+    vga::with_writer(|w| { w.set_color(Color::White, Color::Black); });
 }
 
 /// 显示 ASCII 可打印字符表
@@ -141,7 +140,7 @@ pub fn ascii_table() {
     println!("");
     vga::with_writer(|w| {
         w.set_color(Color::LightBlue, Color::Black);
-        w.put_str("  === ASCII Table (32-126) ===\n");
+        w.put_str(tr!("  === ASCII Table (32-126) ===\n", "  === ASCII 表 (32-126) ===\n"));
         w.set_color(Color::White, Color::Black);
     });
     // 每行显示 8 个字符：dec=char
@@ -163,15 +162,15 @@ pub fn menu() {
     println!("");
     vga::with_writer(|w| {
         w.set_color(Color::LightBlue, Color::Black);
-        w.put_str("  === Utility Tools ===\n");
+        w.put_str(tr!("  === Utility Tools ===\n", "  === 实用工具 ===\n"));
         w.set_color(Color::White, Color::Black);
     });
-    println!("  calc <expr>     Calculator (e.g. calc 2+3*4)");
-    println!("  base <number>   Convert decimal to hex/bin/oct");
-    println!("  prime <number>  Check if a number is prime");
-    println!("  hash <text>     Compute FNV-1a hash");
-    println!("  rand [max]      Generate a random number");
-    println!("  ascii           Show printable ASCII table");
+    tprintln!("  calc <expr>     Calculator (e.g. calc 2+3*4)", "  calc <表达式>   计算器(如 calc 2+3*4)");
+    tprintln!("  base <number>   Convert decimal to hex/bin/oct", "  base <数字>    十进制转十六进制/二进制/八进制");
+    tprintln!("  prime <number>  Check if a number is prime", "  prime <数字>   素数判断");
+    tprintln!("  hash <text>     Compute FNV-1a hash", "  hash <文本>    FNV-1a哈希");
+    tprintln!("  rand [max]      Generate a random number", "  rand [最大值]  生成随机数");
+    tprintln!("  ascii           Show printable ASCII table", "  ascii          显示ASCII可打印表");
 }
 
 // ---------- 辅助函数 ----------
