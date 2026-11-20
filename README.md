@@ -43,6 +43,11 @@
 - 对比本地版本与 GitHub 最新 Release 版本号
 - MLOS 内核本身不带网络栈；配套主机脚本 `tools/check_update.sh` 从 GitHub 拉取最新版本号写入硬盘 LBA 3 扇区，随后 `update` 命令会报告：*已是最新*、*发现新版本*（附下载地址）或*未获取到信息*
 
+### 实验性 GUI（`gui on`）
+- 在文本屏幕上绘制的类 Windows 桌面：壁纸、带 **Start** 菜单的任务栏、平铺窗口（性能监视器 / 文件管理器 / 文件查看器 / 关于）
+- 键盘交互：`M` 打开开始菜单，方向键选择，`Enter` 打开，`Tab` 切换窗口焦点，`Esc` 关闭窗口 / 退出
+- **默认关闭。** 输入 `gui on` 后会先提示这是实验性功能、不保证正常运行，并要求确认后才启动
+
 ### 小游戏
 - 数字炸弹、猜数字、石头剪刀布
 
@@ -74,6 +79,8 @@
 help    clear   echo    version about   whoami  uname   date    mem
 perf    ls      cat     write   rm      disk    update  color   banner
 setup   reboot  halt    games   bomb    guess   rps     tools   calc
+perf    ls      cat     write   rm      disk    update  color   banner
+help 的完整列表见 help 命令
 base    prime   hash    rand    ascii
 ```
 
