@@ -1,7 +1,25 @@
 //! VGA text-mode terminal (80x25, framebuffer 0xB8000, CP437).
-//! English-only output for MLOS v1.0.5.
+//! 支持英文与中文（预览版）双语输出，中文通过 VGA 字模重编程显示。
 
 use core::fmt;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// 当前界面语言：false = English，true = 中文（预览版）
+static CHINESE: AtomicBool = AtomicBool::new(false);
+
+/// 是否启用中文输出
+pub fn lang_zh() -> bool {
+    CHINESE.load(Ordering::Relaxed)
+}
+
+/// 切换界面语言。切换到中文时预装字模并清屏，避免旧内容显示错位。
+pub fn set_lang(zh: bool) {
+    if zh && !lang_zh() {
+        crate::zhfont::init();
+    }
+    CHINESE.store(zh, Ordering::Relaxed);
+    with_writer(|w| w.clear());
+}
 
 pub const WIDTH: usize = 80;
 pub const HEIGHT: usize = 25;
@@ -44,6 +62,8 @@ pub trait Console: fmt::Write {
     fn set_pos(&mut self, row: usize, col: usize);
     /// Write any raw byte (CP437 glyphs) at the cursor without filtering.
     fn put_raw(&mut self, byte: u8);
+    /// Write a high character-code byte (remapped Chinese glyph slot).
+    fn put_glyph_byte(&mut self, byte: u8);
 }
 
 pub struct TextConsole {
@@ -102,9 +122,44 @@ impl TextConsole {
     }
 
     pub fn put_str(&mut self, s: &str) {
-        for b in s.bytes() {
-            TextConsole::put_byte(self, b);
+        let bytes = s.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b < 0x80 {
+                TextConsole::put_byte(self, b);
+                i += 1;
+            } else if b < 0xE0 {
+                // 2 字节 UTF-8：系统文案未使用，跳过
+                i += 2;
+            } else if b < 0xF0 && i + 2 < bytes.len() {
+                let cp = ((b as u32 & 0x0F) << 12)
+                    | ((bytes[i + 1] as u32 & 0x3F) << 6)
+                    | (bytes[i + 2] as u32 & 0x3F);
+                if lang_zh() {
+                    match crate::zhfont::glyph_bytes(cp) {
+                        Some((lo, hi)) => {
+                            TextConsole::put_glyph_byte(self, lo);
+                            TextConsole::put_glyph_byte(self, hi);
+                        }
+                        None => TextConsole::put_byte(self, b'?'),
+                    }
+                }
+                i += 3;
+            } else {
+                i += 1;
+            }
         }
+    }
+
+    /// 写入一个重映射的高位字符码（汉字半字模）。
+    pub fn put_glyph_byte(&mut self, byte: u8) {
+        if self.col >= WIDTH {
+            self.newline();
+        }
+        self.write_char_at(self.row, self.col, byte);
+        self.col += 1;
+        TextConsole::update_cursor(self);
     }
 
     fn write_char_at(&self, row: usize, col: usize, byte: u8) {
@@ -199,6 +254,9 @@ impl Console for TextConsole {
     fn put_raw(&mut self, byte: u8) {
         TextConsole::put_raw(self, byte);
     }
+    fn put_glyph_byte(&mut self, byte: u8) {
+        TextConsole::put_glyph_byte(self, byte);
+    }
 }
 
 impl fmt::Write for TextConsole {
@@ -242,26 +300,34 @@ macro_rules! println {
     };
 }
 
-/// Language helper kept for compatibility: always the English string.
+/// 双语字符串：根据当前语言返回英文或中文（预览版）。
 #[macro_export]
 macro_rules! tr {
     ($en:expr, $zh:expr) => {
-        $en
+        if $crate::vga::lang_zh() { $zh } else { $en }
     };
 }
 
-/// Bilingual println (English-only build): prints the English string.
+/// 双语 println：根据当前语言输出英文或中文。
 #[macro_export]
 macro_rules! tprintln {
     ($en:literal, $zh:literal $(, $arg:expr)* $(,)?) => {{
-        $crate::println!($en $(, $arg)*);
+        if $crate::vga::lang_zh() {
+            $crate::println!($zh $(, $arg)*);
+        } else {
+            $crate::println!($en $(, $arg)*);
+        }
     }};
 }
 
-/// Bilingual print (English-only build): prints the English string.
+/// 双语 print：根据当前语言输出英文或中文。
 #[macro_export]
 macro_rules! tprint {
     ($en:literal, $zh:literal $(, $arg:expr)* $(,)?) => {{
-        $crate::print!($en $(, $arg)*);
+        if $crate::vga::lang_zh() {
+            $crate::print!($zh $(, $arg)*);
+        } else {
+            $crate::print!($en $(, $arg)*);
+        }
     }};
 }
