@@ -7,7 +7,7 @@
 //!   [8..12)  已安装标志
 //!   [12..44) 用户名（32 字节）
 //!   [44..52) 密码哈希（u64）
-//!   [52..56) 保留
+//!   [52..56) 语言偏好：0 = English, 1 = 中文预览版
 //!   [56..508) 预留
 //!   [508..512) 校验和（所有前 508 字节求和）
 //! 数据以小端序存放，通过 u16 words 缓冲读写。
@@ -22,6 +22,8 @@ pub struct Config {
     pub username: [u8; 32],
     pub pass_hash: u64,
     pub installed: bool,
+    /// 界面语言偏好：false = English, true = 中文（预览版）
+    pub lang_zh: bool,
 }
 
 impl Config {
@@ -30,6 +32,7 @@ impl Config {
             username: [0; 32],
             pass_hash: 0,
             installed: false,
+            lang_zh: false,
         }
     }
 
@@ -96,11 +99,14 @@ pub fn load() -> Option<Config> {
     }
     // 密码哈希：字节偏移 44..52 = words 22..26
     let pass_hash = read_u64(&buf, 22);
+    // 语言偏好：字节偏移 52..56 = word 26
+    let lang_zh = read_u32(&buf, 26) != 0;
 
     Some(Config {
         username,
         pass_hash,
         installed,
+        lang_zh,
     })
 }
 
@@ -119,6 +125,8 @@ pub fn save(cfg: &Config) -> bool {
     }
     // 密码哈希：words 22..26
     write_u64(&mut buf, 22, cfg.pass_hash);
+    // 语言偏好：word 26
+    write_u32(&mut buf, 26, if cfg.lang_zh { 1 } else { 0 });
 
     // 校验和：word 254
     let sum = checksum(&buf);

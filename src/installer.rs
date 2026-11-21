@@ -23,6 +23,10 @@ const STAGE2_LBA: u32 = 2048;
 const HDR_LBA: u32 = 4096;
 const IMG_LBA: u32 = 4097;
 
+/// 安装进度旋转动画（替代旧版点号进度）
+const SPIN: [u8; 4] = [b'/', b'-', b'\\', b'|'];
+static mut SPIN_INDEX: u8 = 0;
+
 extern "C" {
     static __kernel_start: u8;
     static __kernel_end: u8;
@@ -143,9 +147,14 @@ fn write_bytes(lba: u32, bytes: &[u8]) -> bool {
         if !ata::write_sector(lba + i as u32, &sec) {
             return false;
         }
-        // small progress yield so a long write stays visible
-        if i % 64 == 63 {
-            crate::vga::with_writer(|w| w.put_byte(b'.'));
+        // 旋转动画反馈写入进度（固定位置，不滚动屏幕）
+        if i % 16 == 15 {
+            unsafe { SPIN_INDEX = SPIN_INDEX.wrapping_add(1) % 4; }
+            let frame = SPIN[unsafe { SPIN_INDEX as usize }];
+            crate::vga::with_writer(|w| {
+                w.set_pos(21, 12);
+                w.put_byte(frame);
+            });
         }
     }
     true

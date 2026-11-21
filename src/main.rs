@@ -13,6 +13,7 @@ mod installer;
 mod input;
 mod io;
 mod keyboard;
+mod mouse;
 mod perf;
 mod rng;
 mod setup;
@@ -24,6 +25,7 @@ mod update;
 mod usb;
 mod vga;
 mod video;
+mod zhfont;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
@@ -89,7 +91,7 @@ pub fn print_banner() {
         w.put_str("  | |  | | |_| | |__| |_| |\n");
         w.put_str("  |_|  |_|\\___/|____|\\___/ \n");
         w.set_color(Color::LightGreen, Color::Black);
-        w.put_str("  MLOS - Minimal Light Operating System v1.0.5\n");
+        w.put_str("  MLOS - Minimal Light Operating System v1.0.6\n");
         w.set_color(Color::DarkGray, Color::Black);
         w.put_str("  --------------------------------------------------------\n");
     });
