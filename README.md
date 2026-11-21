@@ -20,15 +20,26 @@
 - PS/2 键盘驱动，完整美式布局（Shift、退格、回车）
 - 通过 Multiboot2 内存映射检测可用内存
 
-### 启动动画与系统 LOGO
-- 开机显示 MLOS 像素风 LOGO（逐行动画淡入）与开发者署名
-- 随后播放 **15 秒启动进度条**，分阶段显示初始化进度：
-  CPU/内存 → 自适应分辨率检测 → PCI / USB 总线扫描 → USB 控制器初始化 → 硬盘挂载 → 用户配置 → Shell
+### 安装与登录（v1.0.6 新流程）
+首次启动进入 **5 步安装向导**：
 
-### 安装与登录
-- 首次启动进入安装向导：设置用户名与密码
-- 密码以 FNV-1a 哈希写入硬盘，绝不存明文
-- 之后每次启动都需要登录验证
+1. **选择语言**：English 或 中文（预览版）
+2. **硬盘检测**：确认 ATA 硬盘可用
+3. **创建账户**：设置用户名与密码（FNV-1a 哈希写入硬盘，绝不存明文）
+4. **安装系统**：写入引导程序与内核，用**旋转动画**反馈进度
+5. **完成**：直接进入登录界面
+
+之后每次启动都需要登录验证；`setup` 命令可重新运行向导，`exit` 可注销回到登录界面。
+
+### 中文（预览版）支持（v1.0.6 新增）
+- 通过 `lang zh` 命令或在安装向导第一步选择中文，即可切换界面语言；偏好写入硬盘，下次开机自动生效
+- 实现原理：VGA 字符发生器字模重编程，把汉字 16×16 点阵拆成左右两个 8×16 字形，占用 ASCII 保留区之外的字符码；ASCII 区保持不变
+- 字库由 `tools/gen_zhfont.py` 从 Noto Sans CJK SC 自动生成，收录系统文案中出现的汉字（约 350 字）
+- 语言切换框架、双语文案、字库与渲染管线均为完整实现：英文界面在任何环境正常；中文界面在支持字模重编程的 VGA 上显示汉字点阵
+- **预览版限制**：
+  - 字形槽只有 64 个，同屏不同汉字过多时较早装入的字模会被覆盖；字库外的汉字显示为 `?`
+  - 部分虚拟 VGA（如 QEMU 的 std / Cirrus 模拟）会锁定字符码 `0x80-0xFF` 使用 ROM 字体，导致该区间无法加载自定义字模——在这些环境下中文可能显示为 CP437 字符。**真机 VGA 与标准 VGA 实现不受此限制**。若在虚拟机中遇到此情况，请用 `lang en` 切回英文
+  - 这是实验性功能，欢迎反馈
 
 ### 硬盘持久化
 - ATA PIO（LBA28）驱动，操作主硬盘
@@ -54,6 +65,12 @@
 - **内存**：可用总量、内核占用、剩余内存与使用率
 - **硬盘**：通过 ATA IDENTIFY 获取容量、MLOS 已用扇区、剩余空间
 
+### 类 Linux 命令行（v1.0.6 扩充）
+- Shell 提示符采用 `user@mlos:~$` 风格，支持逻辑工作目录（`pwd` / `cd` / `cd ..` / `cd ~`）
+- 命令风格向 Linux 靠拢：`ls -l`、`cat -n`、`uname -a`、`grep`、`history`、`man`、`whoami`、`who`、`hostname`、`uptime`、`free`、`df`、`ps`、`top`、`mkdir` / `touch`、`exit` / `logout`
+- `help` 按分类列出全部命令；`man <命令>` 提供简要手册；未知命令给出清晰提示
+- 支持 `exit` 注销并回到登录界面，无需重启
+
 ### 文件浏览器（`ls` / `cat` / `write` / `rm`）
 - MiniFS：建立在原始硬盘扇区上的简易文件存储（目录扇区位于 LBA 4，共 12 个文件槽位 × 4 KB）
 - 在 Shell 中直接创建、列出、查看和删除文本文件
@@ -62,10 +79,11 @@
 - 对比本地版本与 GitHub 最新 Release 版本号
 - MLOS 内核本身不带网络栈；配套主机脚本 `tools/check_update.sh` 从 GitHub 拉取最新版本号写入硬盘 LBA 3 扇区，随后 `update` 命令会报告：*已是最新*、*发现新版本*（附下载地址）或*未获取到信息*
 
-### 实验性 GUI（`gui on`）
-- 在文本屏幕上绘制的类 Windows 桌面：壁纸、带 **Start** 菜单的任务栏、平铺窗口（性能监视器 / 文件管理器 / 文件查看器 / 关于）
-- 键盘交互：`M` 打开开始菜单，方向键选择，`Enter` 打开，`Tab` 切换窗口焦点，`Esc` 关闭窗口 / 退出
-- **默认关闭。** 输入 `gui on` 后会先提示这是实验性功能、不保证正常运行，并要求确认后才启动
+### 桌面 GUI（`gui`，v1.0.6 重做）
+- Linux 风格文本桌面：顶部面板 + 桌面图标 + 2×2 平铺窗口 + 底部任务栏
+- **支持 PS/2 鼠标点击**：点击 `[Apps]` / `[Start]` 打开菜单、点击图标启动程序、点击标题栏聚焦窗口、点击 `[X]` 关闭窗口、点击文件列表打开文件查看器
+- 键盘仍可操作：`M` 打开菜单，方向键选择，`Enter` 打开，`Tab` 切换窗口，`Esc` 关闭窗口 / 退出
+- 去掉了旧版"实验性功能"确认步骤，输入 `gui` 或 `gui on` 直接启动；桌面内可点击语言按钮或菜单项切换中英文
 
 ### 小游戏
 - 数字炸弹、猜数字、石头剪刀布
@@ -89,14 +107,12 @@
 | 硬盘状态（`disk`） | ![disk](screenshots/en_disk.png) |
 | 更新检测（`update`） | ![update](screenshots/en_update.png) |
 | 游戏菜单 | ![games](screenshots/en_games.png) |
-| GUI 启动警告（实验性功能确认） | ![gui warning](screenshots/gui_warning.png) |
-| GUI 桌面（`gui on` 后） | ![gui desktop](screenshots/gui_desktop.png) |
+| GUI 启动警告（v1.0.5 历史截图，v1.0.6 已取消） | ![gui warning](screenshots/gui_warning.png) |
+| GUI 桌面（v1.0.5 历史截图，v1.0.6 支持鼠标） | ![gui desktop](screenshots/gui_desktop.png) |
 | GUI 开始菜单 | ![gui menu](screenshots/gui_menu.png) |
 | GUI 性能监视器 | ![gui perf](screenshots/gui_perf.png) |
 | GUI 文件查看 | ![gui files](screenshots/gui_files.png) |
-| 启动 LOGO（逐行动画） | ![v105 logo](screenshots/v105_logo.png) |
-| 15 秒启动进度条 | ![v105 bar](screenshots/v105_bar.png) |
-| 安装向导 | ![v105 wizard](screenshots/v105_wizard.png) |
+| 安装向导（v1.0.5 历史截图，v1.0.6 已重做为 5 步） | ![wizard](screenshots/v105_wizard.png) |
 | 系统写入硬盘（免 ISO 引导） | ![v105 install](screenshots/v105_install.png) |
 | 硬盘直接启动 → 登录 | ![v105 bootlogin](screenshots/v105_bootlogin.png) |
 | 硬盘直接启动 → Shell | ![v105 bootshell](screenshots/v105_bootshell.png) |
@@ -106,12 +122,15 @@
 ## 命令列表
 
 ```
-help    clear   echo    version about   whoami  uname   date    mem
-perf    ls      cat     write   rm      disk    update  usb     resolution
-setup   bootinstall  reboot  halt  games  bomb  guess  rps
-tools   calc    base    prime   hash    rand    ascii
+help  man     clear   echo    history exit    logout  reboot  halt
+pwd   cd      ls      cat     write   touch   rm      grep
+version  uname  about  whoami  who    id      hostname  date    uptime
+mem   free    df      ps      top     perf    disk    usb     resolution
+lang  color   banner  setup   bootinstall    update  gui
+games bomb    guess   rps     tools   calc    base    prime   hash    rand    ascii
+```
 
-完整列表见 `help` 命令。
+完整列表见 `help` 命令，命令用法见 `man <命令>`。
 
 ---
 
@@ -209,8 +228,11 @@ MLOS/
 ├── src/
 │   ├── main.rs          # 内核入口、横幅、内存映射解析
 │   ├── boot.rs          # 32 位 → 64 位长模式切换
-│   ├── vga.rs           # VGA 文本模式终端 + 打印宏
+│   ├── vga.rs           # VGA 文本模式终端 + 双语打印宏
+│   ├── zhfont.rs        # 中文预览版：VGA 字模重编程与槽位管理
+│   ├── zhfont_data.rs   # 自动生成的汉字点阵字库（gen_zhfont.py）
 │   ├── keyboard.rs      # PS/2 键盘驱动
+│   ├── mouse.rs         # PS/2 鼠标驱动（点击/坐标映射）
 │   ├── input.rs         # 行编辑辅助
 │   ├── io.rs            # 端口 I/O（inb/outb/rdtsc 等）
 │   ├── ata.rs           # ATA PIO 硬盘驱动（读/写/识别）
@@ -224,7 +246,8 @@ MLOS/
 │   ├── tools.rs         # 实用工具
 │   └── rng.rs           # xorshift64* 随机数
 ├── tools/
-│   └── check_update.sh  # 主机侧更新拉取脚本
+│   ├── check_update.sh  # 主机侧更新拉取脚本
+│   └── gen_zhfont.py    # 重新生成中文点阵字库
 ├── screenshots/         # 系统截图（英文界面）
 ├── grub.cfg             # GRUB 菜单
 ├── linker.ld            # 内核链接脚本
@@ -238,7 +261,7 @@ MLOS/
 
 | LBA | 用途 |
 |-----|------|
-| 1   | 用户配置（魔数 `MLOS`、用户名、FNV-1a 密码哈希、校验和） |
+| 1   | 用户配置（魔数 `MLOS`、用户名、FNV-1a 密码哈希、语言偏好、校验和） |
 | 3   | 远端版本信息（魔数 `UPDT`，由 `tools/check_update.sh` 写入） |
 | 4   | MiniFS 目录扇区（魔数 `MFSD`，12 个条目） |
 | 5+  | MiniFS 文件数据，每槽位 8 个扇区（4 KB） |

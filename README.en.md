@@ -20,10 +20,26 @@
 - PS/2 keyboard driver with full US layout (shift, backspace, enter)
 - Usable-memory detection from the Multiboot2 memory map
 
-### Installation & login
-- First-boot setup wizard: choose a username and password
-- Passwords stored as FNV-1a hashes on disk (never in plain text)
-- Login screen on every subsequent boot
+### Installation & login (redesigned in v1.0.6)
+The first boot runs a **5-step setup wizard**:
+
+1. **Language**: English or Chinese (preview)
+2. **Disk detection**: verify the ATA hard disk is present
+3. **Create account**: choose username and password (FNV-1a hash on disk, never plain text)
+4. **Install system**: write bootloader and kernel, with a **spinning** progress animation
+5. **Done**: continue directly to the login screen
+
+Every later boot requires login. The `setup` command re-runs the wizard, and `exit` logs out and returns to login.
+
+### Chinese (Preview) support (new in v1.0.6)
+- Run `lang zh` or pick Chinese in step 1 of the wizard to switch the interface language. The preference is saved to disk and applied automatically on the next boot.
+- Implementation: VGA character-generator font reprogramming. Each 16x16 Han glyph is split into two 8x16 half-glyphs placed outside the ASCII range; ASCII glyphs remain untouched.
+- The font data is generated from Noto Sans CJK SC by `tools/gen_zhfont.py` and covers the ~350 Han characters used in system strings.
+- The language-switching framework, bilingual strings, font data and rendering pipeline are complete: the English UI works everywhere; the Chinese UI renders Han glyphs on VGA adapters that support font reprogramming.
+- **Preview limits**:
+  - Only 64 glyph slots exist; if more distinct characters appear on one screen, earlier slots are reused. Characters outside the bundled font render as `?`.
+  - Some virtual VGA adapters (e.g. QEMU std / Cirrus emulation) lock character codes `0x80-0xFF` to the ROM font, so custom glyphs cannot be loaded into that range — on those hosts Chinese may appear as CP437 characters. **Real VGA hardware and standard VGA implementations are unaffected.** Use `lang en` to switch back if this occurs.
+  - Experimental - feedback welcome.
 
 ### Hard-disk persistence
 - ATA PIO (LBA28) driver for the Primary Master disk
@@ -36,11 +52,6 @@
 - After installation the machine boots MLOS **directly from the hard disk - the ISO is no longer needed**
   (`bootinstall` re-installs / repairs at any time)
 - Custom two-stage bootloader: MBR (EDD reads) -> Stage 2 (loads kernel, e820 map, protected mode trampoline)
-
-### Boot animation & system logo
-- Boot shows a pixel-art MLOS logo (line-by-line fade-in animation) plus the developer signature
-- Then a **15-second boot progress bar** plays with staged messages:
-  CPU/memory -> adaptive display detection -> PCI / USB bus scan -> USB controller init -> disk mount -> user config -> shell
 
 ### USB compatibility (USB 1.0 - 3.2)
 - PCI bus enumeration detects every USB host-controller class:
@@ -58,6 +69,12 @@
 - **Memory**: total usable, kernel image footprint, estimated free memory and usage %
 - **Disk**: capacity from ATA IDENTIFY, sectors used by MLOS, free space
 
+### Linux-like shell (expanded in v1.0.6)
+- `user@mlos:~$` style prompt with a logical working directory (`pwd`, `cd`, `cd ..`, `cd ~`)
+- Linux-style commands and flags: `ls -l`, `cat -n`, `uname -a`, `grep`, `history`, `man`, `whoami`, `who`, `hostname`, `uptime`, `free`, `df`, `ps`, `top`, `mkdir` / `touch`, `exit` / `logout`
+- `help` lists all commands by category; `man <command>` shows a short manual; unknown commands give a clean error
+- `exit` logs out back to the login screen without a reboot
+
 ### File browser (`ls` / `cat` / `write` / `rm`)
 - MiniFS: a simple file store laid out on raw disk sectors (directory sector at LBA 4, 12 file slots × 4 KB each)
 - Create, list, read and delete text files directly from the shell
@@ -66,10 +83,11 @@
 - Compares the local version with the latest GitHub release
 - MLOS has no network stack by design; the bundled host script `tools/check_update.sh` fetches the newest release tag from GitHub and writes it into disk sector LBA 3, then `update` reports: *up to date*, *new version available* (+ download URL), or *no info*
 
-### Experimental GUI (`gui on`)
-- Windows-like desktop drawn on the text screen: wallpaper, taskbar with a **Start** menu, tiled windows (Performance Monitor / File Explorer / File Viewer / About)
-- Keyboard interaction: `M` opens the Start menu, arrows navigate, `Enter` opens items, `Tab` switches window focus, `Esc` closes windows / exits
-- **Disabled by default.** `gui on` first warns that this is an experimental feature that is not guaranteed to work, and asks for confirmation
+### Desktop GUI (`gui`, redesigned in v1.0.6)
+- Linux-style text desktop: top panel + desktop icons + 2x2 tiled windows + bottom taskbar
+- **PS/2 mouse support**: click `[Apps]` / `[Start]` to open the menu, click icons to launch programs, click a title bar to focus a window, click `[X]` to close it, click a file row to open the viewer
+- Keyboard still works: `M` menu, arrows navigate, `Enter` opens, `Tab` switches focus, `Esc` closes / exits
+- The old "experimental feature" confirmation is gone: `gui` or `gui on` starts the desktop immediately; the language button and menu item switch English / Chinese in place
 
 ### Games
 - Number Bomb, Guess Number, Rock-Paper-Scissors
@@ -98,8 +116,6 @@
 | GUI Start menu | ![gui menu](screenshots/gui_menu.png) |
 | GUI performance monitor | ![gui perf](screenshots/gui_perf.png) |
 | GUI file viewer | ![gui files](screenshots/gui_files.png) |
-| Boot logo (animated) | ![v105 logo](screenshots/v105_logo.png) |
-| 15-second boot progress bar | ![v105 bar](screenshots/v105_bar.png) |
 | Setup wizard | ![v105 wizard](screenshots/v105_wizard.png) |
 | System written to disk (ISO-free boot) | ![v105 install](screenshots/v105_install.png) |
 | Boot from hard disk -> login | ![v105 bootlogin](screenshots/v105_bootlogin.png) |
@@ -110,22 +126,15 @@
 ## Commands
 
 ```
-help    clear   echo    version about   whoami  uname   date    mem
-perf    ls      cat     write   rm      disk    update  usb     resolution
-setup   bootinstall  reboot  halt  games  bomb  guess  rps
-tools   calc    base    prime   hash    rand    ascii
+help  man     clear   echo    history exit    logout  reboot  halt
+pwd   cd      ls      cat     write   touch   rm      grep
+version  uname  about  whoami  who    id      hostname  date    uptime
+mem   free    df      ps      top     perf    disk    usb     resolution
+lang  color   banner  setup   bootinstall    update  gui
+games bomb    guess   rps     tools   calc    base    prime   hash    rand    ascii
+```
 
-See `help` for the full list.
-
----
-
-## Running MLOS in Virtual Machines
-
-> **Important**: MLOS boots with GRUB `i386-pc`, so the VM must use **BIOS (legacy) boot**. Do **not** enable UEFI/EFI in the VM settings. Attach `MLOS.iso` as a CD-ROM, attach a virtual hard disk for persistence, and give the VM at least 128 MB of RAM.
-
-### 1. QEMU (Linux / macOS / Windows)
-
-```bash
+See `help` for the full list and `man <command>` for usage.bash
 # Create a persistent 16 MB raw disk image
 qemu-img create -f raw mlos-disk.img 16M
 
@@ -213,8 +222,11 @@ MLOS/
 ├── src/
 │   ├── main.rs          # kernel entry, banner, memory-map parsing
 │   ├── boot.rs          # 32-bit → 64-bit long mode trampoline
-│   ├── vga.rs           # VGA text-mode terminal + print macros
+│   ├── vga.rs           # VGA text-mode terminal + bilingual print macros
+│   ├── zhfont.rs        # Chinese preview: VGA font reprogramming + slot manager
+│   ├── zhfont_data.rs   # generated Han bitmap font (gen_zhfont.py)
 │   ├── keyboard.rs      # PS/2 keyboard driver
+│   ├── mouse.rs         # PS/2 mouse driver (click / coordinate mapping)
 │   ├── input.rs         # line editing helpers
 │   ├── io.rs            # port I/O (inb/outb/rdtsc...)
 │   ├── ata.rs           # ATA PIO disk driver (read/write/identify)
@@ -228,7 +240,8 @@ MLOS/
 │   ├── tools.rs         # tools
 │   └── rng.rs           # xorshift64* random numbers
 ├── tools/
-│   └── check_update.sh  # host-side update fetcher
+│   ├── check_update.sh  # host-side update fetcher
+│   └── gen_zhfont.py    # regenerate the Chinese bitmap font
 ├── screenshots/         # system screenshots (English UI)
 ├── grub.cfg             # GRUB menu
 ├── linker.ld            # kernel linker script
@@ -242,7 +255,7 @@ MLOS/
 
 | LBA | Purpose |
 |-----|---------|
-| 1   | User configuration (magic `MLOS`, username, FNV-1a password hash, checksum) |
+| 1   | User configuration (magic `MLOS`, username, FNV-1a password hash, language preference, checksum) |
 | 3   | Remote version info (magic `UPDT`, written by `tools/check_update.sh`) |
 | 4   | MiniFS directory (magic `MFSD`, 12 entries) |
 | 5+  | MiniFS file data, 8 sectors (4 KB) per slot |
