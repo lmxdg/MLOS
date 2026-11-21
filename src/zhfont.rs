@@ -21,7 +21,7 @@ mod data {
 const SLOT_COUNT: usize = 64;
 /// 第一个用于汉字半字形的字符码
 const BASE_CODE: u8 = 0x80;
-const VRAM_FONT: usize = 0xB8000;
+const VRAM_FONT: usize = 0xA0000;
 
 static mut SLOTS: [u32; SLOT_COUNT] = [0; SLOT_COUNT];
 static mut NEXT_SLOT: usize = 0;
@@ -68,14 +68,14 @@ unsafe fn font_write_enter() -> (u8, u8, u8, u8) {
 
     // Sequencer Map Mask: 只允许写 plane 2（字符发生器 RAM）
     seq_write(2, 0x04);
-    // Sequencer Memory Mode: bit1=1 -> odd/even 关闭；bit2=0 -> 保持 alpha(文本)模式。
-    // 若 bit2=1 会退出文本模式，导致字模写入落在错误区域（Linux vgacon 用 0x02）。
-    seq_write(4, 0x02);
+    // Sequencer Memory Mode: 0x06 = 关闭 odd/even 主机寻址 + 允许访问
+    // 64KB 字符发生器窗口。这是 OSDev / Linux vgacon 使用的标准组合。
+    seq_write(4, 0x06);
     // Graphics Controller Graphics Mode register: write mode 0
     gfx_write(5, 0x00);
-    // Graphics Controller Miscellaneous: bit2=1 -> host odd/even 关闭，
-    // CPU 地址线性映射到 plane 2；bit0=0 保持文本模式。
-    gfx_write(6, 0x04);
+    // Graphics Controller Miscellaneous: bit2=0 -> A0000-BFFFF 64KB 窗口，
+    // bit0=0 保持文本模式；CPU 线性访问 plane 2（字符发生器 RAM）。
+    gfx_write(6, 0x00);
     (s2, s4, g5, g6)
 }
 
@@ -92,16 +92,12 @@ unsafe fn upload_glyph(code: u8, rows: &[u8]) {
 
     // 字模 RAM 按 32 字节槽组织（兼容 8x32 字体），8x16 字体占每槽前 16 字节。
     // 字符码 code 的字形位于物理偏移 code*32（已由 'A' 重编程实验验证生效）。
-    // 不同 VGA 实现（真硬件 / QEMU std VGA）对字符码 >=0x80 使用不同字模 bank：
-    // 有的用槽 code，有的用槽 code+0x100。两处都写以确保兼容。
-    // 两种可能的 Map B 物理映射都写：code（bank0 同索引）与
-    // code+0x100（第二字模区），覆盖不同 VGA 实现。
-    for &slot in &[code as usize, code as usize + 0x100] {
-        let dst = (VRAM_FONT as *mut u8).add(slot * 32);
-        for i in 0..32 {
-            let v = if i < 16 { rows[i] } else { 0 };
-            core::ptr::write_volatile(dst.add(i), v);
-        }
+    // 字符发生器 RAM 位于 A0000，每个字符 32 字节。只写当前槽，绝不能
+    // 越界写第二字模区（那会覆盖 0x00-0x7F 的 ASCII 字模，造成全屏乱码）。
+    let dst = (VRAM_FONT as *mut u8).add(code as usize * 32);
+    for i in 0..32 {
+        let v = if i < 16 { rows[i] } else { 0 };
+        core::ptr::write_volatile(dst.add(i), v);
     }
 
     font_write_leave(state);

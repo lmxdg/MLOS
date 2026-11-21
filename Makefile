@@ -1,42 +1,50 @@
 KERNEL := target/x86_64-os/release/mlos
-ISODIR := iso
 ISO    := MLOS.iso
 DISK   := mlos-disk.img
-DISKSZ := 16M
+DISKSZ := 32M
+NASM   ?= nasm
+PYTHON ?= python3
+QEMU   ?= qemu-system-x86_64
 
-.PHONY: all kernel iso disk run debug rebuild clean
+.PHONY: all boot kernel iso disk run run-vnc debug rebuild clean
 
 all: iso disk
 
 boot:
-	nasm -f bin boot/mbr.asm -o boot/mbr.bin
-	nasm -f bin boot/stage2.asm -o boot/stage2.bin
+	$(NASM) -f bin boot/mbr.asm -o boot/mbr.bin
+	$(NASM) -f bin -I boot/ boot/stage2.asm -o boot/stage2.bin
+	$(NASM) -f bin -I boot/ boot/isoboot.asm -o boot/isoboot.bin
 
 kernel: boot
-	RUSTC_BOOTSTRAP=1 cargo build --release
+	RUSTC_BOOTSTRAP=1 cargo build --release -Zjson-target-spec
 
 iso: kernel
-	mkdir -p $(ISODIR)/boot/grub
-	cp $(KERNEL) $(ISODIR)/boot/mlos.bin
-	cp grub.cfg $(ISODIR)/boot/grub/grub.cfg
-	grub-mkrescue -o $(ISO) $(ISODIR)
-	@echo "==> Built $(ISO)"
+	$(PYTHON) tools/mkiso.py $(KERNEL) boot/isoboot.bin $(ISO)
 
-# 创建 16MB 持久化虚拟硬盘（若不存在）
 disk:
 	@if [ ! -f $(DISK) ]; then \
 		echo "==> Creating $(DISK) ($(DISKSZ))"; \
-		qemu-img create -f raw $(DISK) $(DISKSZ); \
+		if command -v qemu-img >/dev/null 2>&1; then \
+			qemu-img create -f raw $(DISK) $(DISKSZ); \
+		else \
+			$(PYTHON) -c "open('$(DISK)','wb').truncate(32*1024*1024)"; \
+		fi; \
 	fi
 
 run: all
-	qemu-system-x86_64 -cdrom $(ISO) -m 128M -boot d -net none -no-reboot \
+	$(QEMU) -cdrom $(ISO) -m 128M -boot d -net none -no-reboot \
+		-vga std \
+		-drive file=$(DISK),format=raw,if=ide,index=0,media=disk
+
+run-vnc: all
+	$(QEMU) -cdrom $(ISO) -m 128M -boot d -net none -no-reboot \
+		-vga std -display vnc=:0 \
 		-drive file=$(DISK),format=raw,if=ide,index=0,media=disk
 
 debug: all
-	qemu-system-x86_64 -cdrom $(ISO) -m 128M -boot d -net none -no-reboot \
-		-drive file=$(DISK),format=raw,if=ide,index=0,media=disk \
-		-d int -D qemu.log
+	$(QEMU) -cdrom $(ISO) -m 128M -boot d -net none -no-reboot \
+		-vga std -d int -D qemu.log \
+		-drive file=$(DISK),format=raw,if=ide,index=0,media=disk
 
 rebuild:
 	cargo clean
@@ -44,4 +52,4 @@ rebuild:
 
 clean:
 	cargo clean
-	rm -rf $(ISODIR) $(ISO) qemu.log $(DISK)
+	rm -rf iso $(ISO) qemu.log $(DISK) boot/isoboot.bin

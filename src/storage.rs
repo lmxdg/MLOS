@@ -18,6 +18,7 @@ const CONFIG_LBA: u32 = 1;
 const MAGIC: u32 = 0x4D4C4F53; // "MLOS"
 const VERSION: u32 = 1;
 
+#[derive(Clone, Copy)]
 pub struct Config {
     pub username: [u8; 32],
     pub pass_hash: u64,

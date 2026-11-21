@@ -182,10 +182,9 @@ pub fn write(name: &str, data: &[u8]) -> bool {
 
     // write data sectors
     let base = DATA_BASE_LBA + (idx as u32) * SECTORS_PER_FILE;
-    let mut sector = [0u16; 256];
     let mut remaining = data;
     for s in 0..SECTORS_PER_FILE {
-        sector = [0u16; 256];
+        let mut sector = [0u16; 256];
         let take = remaining.len().min(512);
         if take > 0 {
             let (chunk, rest) = remaining.split_at(take);
@@ -238,17 +237,14 @@ pub fn read(name: &str, out: &mut [u8]) -> Option<usize> {
         if !ata::read_sector(base + s, &mut dir_buf) {
             break;
         }
-        for i in 0..256 {
-            if done >= entry.size as usize || done >= out.len() {
-                break;
+        'sector: for word in 0..256 {
+            for b in [(dir_buf[word] & 0x00FF) as u8, (dir_buf[word] >> 8) as u8] {
+                if done >= entry.size as usize || done >= out.len() {
+                    break 'sector;
+                }
+                out[done] = b;
+                done += 1;
             }
-            let b = if i % 2 == 0 {
-                (dir_buf[i] & 0x00FF) as u8
-            } else {
-                (dir_buf[i] >> 8) as u8
-            };
-            out[done] = b;
-            done += 1;
         }
     }
     Some(done)

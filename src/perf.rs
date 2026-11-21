@@ -130,6 +130,9 @@ pub fn disk_info() -> DiskInfo {
     let total = ata::capacity_sectors();
     // fixed layout: config LBA1, version LBA3, directory LBA4, + file data slots
     let fs_used = crate::fs::used_sectors();
-    let used = 3 + fs_used; // LBA1 + LBA3 + LBA4 + file slots
+    let boot_used = if crate::installer::is_installed() {
+        crate::installer::installed_sectors()
+    } else { 0 };
+    let used = 3 + fs_used + boot_used; // config + update + directory + files + disk-boot image
     DiskInfo { present: true, total_sectors: total, used_sectors: used.min(total) }
 }

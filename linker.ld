@@ -19,9 +19,14 @@ SECTIONS {
         *(.data .data.*)
     }
 
+    /* 文件/磁盘镜像只需加载到这里；BSS 由内核启动代码清零。 */
+    __kernel_data_end = .;
+
     .bss : ALIGN(8) {
+        __bss_start = .;
         *(.bss .bss.*)
         *(COMMON)
+        __bss_end = .;
     }
 
     __kernel_end = .;

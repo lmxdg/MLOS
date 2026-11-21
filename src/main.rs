@@ -1,10 +1,16 @@
 #![no_std]
 #![no_main]
 #![allow(dead_code)]
+#![allow(static_mut_refs)]
 extern crate alloc;
 
 mod bump_alloc;
 mod ata;
+mod cursor;
+mod fb;
+mod font;
+mod hw;
+mod rtc;
 mod boot;
 mod fs;
 mod games;
@@ -27,7 +33,6 @@ mod vga;
 mod video;
 mod zhfont;
 
-use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicU64, Ordering};
 use vga::Color;
@@ -37,12 +42,16 @@ pub static TOTAL_MEMORY: AtomicU64 = AtomicU64::new(0);
 
 #[no_mangle]
 pub extern "C" fn kernel_main(_magic: u64, mbi: u64) -> ! {
-    // boot splash: logo animation + 15 second progress bar (also scans USB)
-    splash::run();
-
     let mem_kib = parse_memory_map(mbi);
     TOTAL_MEMORY.store(mem_kib, Ordering::Relaxed);
+
+    // 显示初始化必须在任何输出之前：引导程序提供的 VBE framebuffer 会被
+    // 映射为线性显存，控制台与 GUI 都直接绘制到它上面。
     video::init(mbi);
+    vga::init_display();
+
+    // 开机画面（logo + 进度 + USB 扫描）
+    splash::run();
 
     print_banner();
     vga::with_writer(|w| {

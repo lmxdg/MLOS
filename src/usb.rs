@@ -14,7 +14,7 @@
 //! device classes that arrive through a supported controller are reported as
 //! compatible.
 
-use crate::io::{inb, inl, outb, outl};
+use crate::io::{inb, inl, outl};
 
 const PCI_ADDR: u16 = 0xCF8;
 const PCI_DATA: u16 = 0xCFC;

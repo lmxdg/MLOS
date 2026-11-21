@@ -1,10 +1,15 @@
-; MLOS disk boot - stage 1 (MBR, 512 bytes)
-; BIOS loads at 0x7C00. Probes BIOS hard drives (0x80..0x83, then the
-; passed-in DL), loads stage 2 (32 sectors = 16 KiB) from LBA 2048 to
-; 0x0600 via EDD, verifies its magic, then jumps to it.
+; MLOS 硬盘自引导 - Stage 1（MBR, 512 字节）
+; BIOS 加载到 0x7C00。依次探测 BIOS 硬盘（0x80..0x83，然后 DL），
+; 从 LBA 2048 读取 64 个扇区（32 KiB）的 stage2 到 0x7E00，
+; 校验起始指令字后跳转。
 
 org 0x7C00
 bits 16
+
+STAGE2_SEG   equ 0x0000
+STAGE2_OFF   equ 0x7E00
+STAGE2_LBA   equ 2048
+STAGE2_SECT  equ 64
 
 start:
     cli
@@ -16,7 +21,6 @@ start:
     sti
     mov [saved_dl], dl
 
-    ; ---- probe drives: 0x80..0x83 first, then the passed-in DL ----
     mov bp, 0
     mov dl, 0x80
 .probe_loop:
@@ -33,25 +37,23 @@ start:
     jmp disk_fail
 
 drive_ok:
-    ; ---- load stage2: 32 sectors from LBA 2048 -> 0x0600 ----
     mov si, dap
-    mov byte [si+2], 32
-    mov word [si+4], 0x0600
-    mov word [si+6], 0x0000
-    mov dword [si+8], 2048
-    mov dword [si+12], 0
+    mov byte [si + 2], STAGE2_SECT
+    mov word [si + 4], STAGE2_OFF
+    mov word [si + 6], STAGE2_SEG
+    mov dword [si + 8], STAGE2_LBA
+    mov dword [si + 12], 0
     mov ah, 0x42
     mov dl, [boot_drive]
-    int 13h
+    int 0x13
     jc disk_fail
-
-    ; jump to stage2
-    jmp 0x0000:0x0600
+    jmp STAGE2_SEG:STAGE2_OFF
 
 disk_fail:
     mov si, msg_fail
     call print
 .halt:
+    cli
     hlt
     jmp .halt
 
@@ -61,26 +63,25 @@ print:
     jz .done
     mov ah, 0x0E
     mov bx, 0x0007
-    int 10h
+    int 0x10
     jmp print
 .done:
     ret
 
 try_drive:
-    ; BP=1 if this drive reads LBA 2048 and the stage2 magic matches
     mov [boot_drive], dl
     mov si, dap
-    mov byte [si+2], 1
-    mov word [si+4], 0x0600
-    mov word [si+6], 0x0000
-    mov dword [si+8], 2048
-    mov dword [si+12], 0
+    mov byte [si + 2], 1
+    mov word [si + 4], STAGE2_OFF
+    mov word [si + 6], STAGE2_SEG
+    mov dword [si + 8], STAGE2_LBA
+    mov dword [si + 12], 0
     mov ah, 0x42
-    int 13h
+    int 0x13
     jc .no
-    cmp byte [0x0600], 0xFA     ; stage2 starts: cli
+    cmp byte [STAGE2_OFF], 0xFA       ; cli
     jne .no
-    cmp byte [0x0601], 0x31     ; xor ax,ax
+    cmp byte [STAGE2_OFF + 1], 0x31   ; xor ax, ax
     jne .no
     mov bp, 1
 .no:
@@ -91,14 +92,13 @@ msg_fail db "MLOS: disk boot failed", 0
 boot_drive db 0
 saved_dl   db 0
 
-; Disk Address Packet
 align 4
 dap:
     db 0x10, 0
-    dw 0                         ; sectors
-    dw 0, 0                      ; buffer offset/segment
-    dd 0                         ; LBA low
-    dd 0                         ; LBA high
+    dw 0
+    dw 0, 0
+    dd 0
+    dd 0
 
-times 510-($-$$) db 0
+times 510 - ($ - $$) db 0
 dw 0xAA55

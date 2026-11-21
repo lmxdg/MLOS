@@ -1,16 +1,15 @@
 //! 安装向导与用户认证（v1.0.6 全新流程）
 //!
-//! 首次启动分 5 步完成：选择语言 → 硬盘检测 → 创建账户 → 安装系统 → 完成。
+//! 首次启动分 6 步完成：选择语言 → 硬件检测 → 硬盘检测 → 创建账户 → 安装系统 → 完成。
 //! 安装阶段用旋转动画反馈进度；配置写入 ATA 硬盘持久化。
 //! 后续启动时需要登录认证。
 
 use crate::input::{read_line, wait_key};
 use crate::storage::{self, Config};
-use core::fmt::Write;
-use crate::{print, println, tr, tprintln, tprint};
+use crate::{println, tr, tprintln, tprint};
 use crate::vga::{self, Color};
 
-const STEPS: usize = 5;
+const STEPS: usize = 6;
 
 /// 判断是否已安装（硬盘上有有效配置）
 pub fn is_installed() -> bool {
@@ -34,6 +33,25 @@ fn rule() {
     vga::with_writer(|w| {
         w.set_color(Color::DarkGray, Color::Black);
         w.put_str("  --------------------------------------------------------\n");
+        w.set_color(Color::White, Color::Black);
+    });
+}
+
+fn hw_line(label: &str, ok: bool, detail: &str) {
+    vga::with_writer(|w| {
+        if ok {
+            w.set_color(Color::LightGreen, Color::Black);
+            w.put_str("  [PASS] ");
+        } else {
+            w.set_color(Color::LightRed, Color::Black);
+            w.put_str("  [FAIL] ");
+        }
+        w.set_color(Color::LightGray, Color::Black);
+        w.put_str(label);
+        w.set_color(Color::DarkGray, Color::Black);
+        w.put_str("  ");
+        w.put_str(detail);
+        w.put_str("\n");
         w.set_color(Color::White, Color::Black);
     });
 }
@@ -74,11 +92,70 @@ pub fn run_wizard() -> Option<Config> {
     step_header(1,
         "Choose your language",
         "选择语言");
-    tprintln!("  -> {}", "  -> {}", if zh { "Chinese (Preview)" } else { "English" });
+    tprintln!("  -> {}", "  -> {}", if zh { "中文（预览版）" } else { "English" });
     rule();
 
-    // ---- Step 2: 硬盘检测 ----
+    // ---- Step 2: 硬件要求检测 ----
     step_header(2,
+        "Checking hardware requirements",
+        "检查硬件要求");
+    let hw = crate::hw::check();
+    let cpu_ok = hw.cpu.long_mode && hw.cpu.pae && hw.cpu.sse2;
+    hw_line(tr!("CPU long mode / PAE / SSE2", "CPU 长模式 / PAE / SSE2"), cpu_ok,
+        if cpu_ok { tr!("supported", "支持") } else { tr!("missing required CPU feature", "缺少必需的 CPU 特性") });
+    let mem_txt = if hw.mem_kib > 0 {
+        if hw.mem_ok { tr!("enough", "容量充足") } else { tr!("too small (need >= 16 MiB)", "容量不足（最低 16 MiB）") }
+    } else { tr!("unknown (no memory map)", "未知（无内存映射）") };
+    hw_line(tr!("Usable memory", "可用内存"), hw.mem_ok, mem_txt);
+    hw_line(tr!("PS/2 keyboard controller", "PS/2 键盘控制器"), hw.ps2_ok,
+        if hw.ps2_ok { tr!("ready", "就绪") } else { tr!("not detected", "未检测到") });
+    if hw.fb_present {
+        let mut buf = alloc::string::String::new();
+        if vga::lang_zh() {
+            let _ = core::fmt::Write::write_fmt(&mut buf, format_args!(
+                "{}x{}x{} VBE 帧缓冲", hw.fb_w, hw.fb_h, hw.fb_bpp));
+        } else {
+            let _ = core::fmt::Write::write_fmt(&mut buf, format_args!(
+                "{}x{}x{} VBE framebuffer", hw.fb_w, hw.fb_h, hw.fb_bpp));
+        }
+        hw_line(tr!("Graphical display (GUI)", "图形显示 (GUI)"), hw.fb_ok, &buf);
+    } else {
+        hw_line(tr!("Graphical display (GUI)", "图形显示 (GUI)"), false,
+            tr!("VGA text mode only", "仅 VGA 文本模式"));
+    }
+    if hw.disk_present {
+        let mut buf = alloc::string::String::new();
+        let _ = core::fmt::Write::write_fmt(&mut buf, format_args!(
+            "{} MiB ({} 16 MiB)", hw.disk_sectors as u64 / 2048,
+            tr!("need >=", "最低")));
+        hw_line(tr!("ATA hard disk", "ATA 硬盘"), hw.disk_ok, &buf);
+    } else {
+        hw_line(tr!("ATA hard disk", "ATA 硬盘"), false,
+            tr!("not detected", "未检测到"));
+    }
+    if !hw.critical_ok {
+        println!("");
+        vga::with_writer(|w| w.set_color(Color::LightRed, Color::Black));
+        tprintln!("  ERROR: this machine does not meet the minimum requirements.",
+                  "  错误: 本机不满足最低硬件要求。");
+        vga::with_writer(|w| w.set_color(Color::White, Color::Black));
+        tprintln!("  CPU: x86_64 with PAE and SSE2, 16 MiB RAM, 16 MiB ATA disk.",
+                  "  CPU: 支持 PAE/SSE2 的 x86_64，16 MiB 内存，16 MiB ATA 硬盘。");
+        tprintln!("  Press any key to halt...", "  按任意键停机...");
+        wait_key();
+        return None;
+    }
+    if !hw.gui_ok {
+        vga::with_writer(|w| w.set_color(Color::Yellow, Color::Black));
+        tprintln!("  WARNING: no VBE framebuffer; desktop GUI will be unavailable.",
+                  "  警告: 未检测到 VBE 帧缓冲，图形桌面不可用。");
+        vga::with_writer(|w| w.set_color(Color::White, Color::Black));
+    }
+    tprintln!("  Hardware check: PASS", "  硬件检测: 通过");
+    rule();
+
+    // ---- Step 3: 硬盘检测 ----
+    step_header(3,
         "Detecting hard disk",
         "检测硬盘");
     if !crate::ata::detect() {
@@ -96,8 +173,8 @@ pub fn run_wizard() -> Option<Config> {
     tprintln!("  Hard disk detected: OK", "  硬盘检测: 正常");
     rule();
 
-    // ---- Step 3: 创建账户 ----
-    step_header(3,
+    // ---- Step 4: 创建账户 ----
+    step_header(4,
         "Create your account",
         "创建账户");
     tprintln!("  Your settings will be saved to the hard disk.\n", "  您的设置将保存到硬盘。\n");
@@ -149,8 +226,8 @@ pub fn run_wizard() -> Option<Config> {
     };
     rule();
 
-    // ---- Step 4: 安装系统 ----
-    step_header(4,
+    // ---- Step 5: 安装系统 ----
+    step_header(5,
         "Installing MLOS to disk",
         "正在把 MLOS 安装到硬盘");
     tprintln!("  Saving account settings...", "  正在保存账户设置...");
@@ -199,8 +276,8 @@ pub fn run_wizard() -> Option<Config> {
     }
     rule();
 
-    // ---- Step 5: 完成 ----
-    step_header(5,
+    // ---- Step 6: 完成 ----
+    step_header(6,
         "Setup complete",
         "安装完成");
     vga::with_writer(|w| {

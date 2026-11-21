@@ -14,12 +14,12 @@ use crate::vga::{self, Color};
 
 /// 新开机标志（纯 ASCII，避免与中文点阵字模冲突）
 const LOGO: [&str; 6] = [
-    "  ___  __  __ ___  ",
-    " / _ \\|  \\/  | _ \\ ",
-    "| | | | |\\/| | | | |",
-    "| |_| | |  | | |_| |",
-    " \\___/|_|  |_|\\___/ ",
-    "                    ",
+    "  __  __ _     ___  ____  ",
+    " |  \\/  | |   / _ \\/ ___| ",
+    " | |\\/| | |  | | | \\___ \\ ",
+    " | |  | | |__| |_| |___) |",
+    " |_|  |_|\\___/\\___/|____/ ",
+    "                           ",
 ];
 
 const SPIN: [u8; 4] = [b'|', b'/', b'-', b'\\'];
@@ -39,7 +39,7 @@ const STAGES_ZH: [&str; 6] = [
     "正在加载用户配置",
     "正在启动 MLOS 命令行",
 ];
-const BOOT_SECONDS: u64 = 8;
+const BOOT_SECONDS: u64 = 3;
 
 #[inline]
 fn tsc() -> u64 {
@@ -55,7 +55,7 @@ fn delay_ms(ms: u64, tsc_hz: u64) {
 }
 
 fn center_col(len: usize) -> usize {
-    (80usize.saturating_sub(len)) / 2
+    (vga::size().0.saturating_sub(len)) / 2
 }
 
 /// 显示开机画面。在 kernel_main 中最先调用。
@@ -99,7 +99,7 @@ pub fn run() {
         w.put_str(dev);
         w.put_byte(b'\n');
         let lang_line = if zh { "语言: 中文（预览版）" } else { "Language: English" };
-        for _ in 0..center_col(lang_line.chars().count() * if zh { 2 } else { 1 }) {
+        for _ in 0..center_col(crate::font::text_width(lang_line) / 8) {
             w.put_byte(b' ');
         }
         w.set_color(Color::Yellow, Color::Black);
@@ -124,12 +124,15 @@ pub fn run() {
             last_step = step;
             last_frame = frame;
             let stage = if zh { STAGES_ZH[step] } else { STAGES_EN[step] };
+            let (cols, rows) = vga::size();
+            let row = rows.saturating_sub(5).max(4);
+            let stage_cells = 5 + crate::font::text_width(stage) / 8 + 3;
+            let col = cols.saturating_sub(stage_cells) / 2;
             vga::with_writer(|w| {
-                use core::fmt::Write;
-                w.set_pos(20, 0);
+                w.set_pos(row, 0);
                 w.set_color(Color::Black, Color::Black);
                 for _ in 0..80 { w.put_byte(b' '); }
-                w.set_pos(20, 4);
+                w.set_pos(row, col);
                 w.set_color(Color::Yellow, Color::Black);
                 w.put_byte(b'[');
                 w.put_byte(SPIN[frame]);

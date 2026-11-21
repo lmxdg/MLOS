@@ -15,17 +15,28 @@ pub enum Key {
     Down,
     Left,
     Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Delete,
+    CtrlC,
+    CtrlL,
+    CtrlU,
+    CtrlA,
+    CtrlE,
     Esc,
 }
 
 pub struct Keyboard {
     shift: bool,
+    ctrl: bool,
     caps_lock: bool,
 }
 
 impl Keyboard {
     pub const fn new() -> Self {
-        Self { shift: false, caps_lock: false }
+        Self { shift: false, ctrl: false, caps_lock: false }
     }
 
     pub fn handle_scancode(&mut self, scancode: u8) -> Option<Key> {
@@ -35,6 +46,10 @@ impl Keyboard {
         match code {
             0x2A | 0x36 => {
                 self.shift = !released;
+                return None;
+            }
+            0x1D => {
+                self.ctrl = !released;
                 return None;
             }
             0x3A => {
@@ -55,8 +70,24 @@ impl Keyboard {
             0x50 => return Some(Key::Down),
             0x4B => return Some(Key::Left),
             0x4D => return Some(Key::Right),
+            0x47 => return Some(Key::Home),
+            0x4F => return Some(Key::End),
+            0x49 => return Some(Key::PageUp),
+            0x51 => return Some(Key::PageDown),
+            0x53 => return Some(Key::Delete),
             0x01 => return Some(Key::Esc),
             _ => {}
+        }
+
+        if self.ctrl {
+            return match code {
+                0x2E => Some(Key::CtrlC),
+                0x26 => Some(Key::CtrlL),
+                0x16 => Some(Key::CtrlU),
+                0x1E => Some(Key::CtrlA),
+                0x12 => Some(Key::CtrlE),
+                _ => None,
+            };
         }
 
         let upper = self.shift ^ self.caps_lock;

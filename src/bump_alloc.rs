@@ -4,7 +4,7 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-const HEAP_SIZE: usize = 128 * 1024;
+const HEAP_SIZE: usize = 512 * 1024;
 
 struct Bump;
 

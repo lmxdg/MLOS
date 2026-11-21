@@ -2,8 +2,7 @@
 
 use crate::input::{read_line, wait_key};
 use crate::rng::Rng;
-use core::fmt::Write;
-use crate::{println, print, tr, tprintln, tprint};
+use crate::{println, tr, tprintln, tprint};
 use crate::vga::{self, Color};
 
 /// 数字炸弹：1~100 中有一个"炸弹"数字，玩家逐步逼近，踩中即失败。
@@ -71,11 +70,9 @@ pub fn number_bomb() {
             3 => ("Hot! ...", "很烫！...", Color::LightRed),
             _ => ("VERY HOT! ...", "非常烫！...", Color::Red),
         };
-        vga::with_writer(|w| {
-            w.set_color(color, Color::Black);
-            tprintln!("  {} [distance {}]", "  {} [距离{}]", tr!(en, zh), diff);
-            w.set_color(Color::White, Color::Black);
-        });
+        vga::with_writer(|w| w.set_color(color, Color::Black));
+        tprintln!("  {} [distance {}]", "  {} [距离{}]", tr!(en, zh), diff);
+        vga::with_writer(|w| w.set_color(Color::White, Color::Black));
     }
 }
 

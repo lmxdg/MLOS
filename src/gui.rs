@@ -1,189 +1,868 @@
-//! MLOS 桌面（Linux 风格，支持鼠标点击）。
+//! MLOS 图形桌面（VBE framebuffer + PS/2 鼠标）。
 //!
-//! 文本模式图形桌面：顶部面板 + 桌面图标 + 可平移焦点的窗口 + 底部任务栏。
-//! 支持 PS/2 鼠标点击（打开菜单、启动程序、聚焦/关闭窗口、选择文件），
-//! 同时保留键盘快捷键（Tab 切换窗口、M 菜单、方向键、Enter、Esc）。
-//! 中文模式下所有标签通过点阵字模显示。
+//! Linux 风格：顶部面板、左侧图标、可拖动窗口、底部任务栏、应用菜单。
+//! 所有文本使用 8x16 ASCII / 16x16 中文点阵直接绘制到帧缓冲，不再依赖
+//! VGA 文本模式或字模重编程。绘制过程不使用堆分配（bump allocator 不会
+//! 回收），所有格式化都写入栈上的小缓冲区。
 
+use crate::fb;
 use crate::fs;
+use crate::hw;
+use crate::installer;
 use crate::keyboard::{self, Key, Keyboard};
 use crate::mouse;
 use crate::perf;
-use crate::vga::{self, Color};
-use crate::TOTAL_MEMORY;
-use alloc::{format, string::{String, ToString}};
-use core::sync::atomic::Ordering;
+use crate::rtc;
+use crate::usb;
+use crate::vga;
+use core::fmt::{self, Write};
 
-const WIDTH: usize = 80;
-const HEIGHT: usize = 25;
-const TASKBAR_ROW: usize = HEIGHT - 1;
-const PANEL_ROW: usize = 0;
+const PANEL_H: i32 = 28;
+const TASKBAR_H: i32 = 30;
+
+const BG: u32 = 0x1C202A;
+const WALL: u32 = 0x171B24;
+const PANEL: u32 = 0x262B36;
+const PANEL_DARK: u32 = 0x1E222B;
+const TEXT: u32 = 0xE6E9EF;
+const MUTED: u32 = 0x9AA3B2;
+const ACCENT: u32 = 0x409EFF;
+const GREEN: u32 = 0x4CD964;
+const RED: u32 = 0xFF5F57;
+const YELLOW: u32 = 0xFFCC00;
+const WIN_BG: u32 = 0xF2F4F8;
+const WIN_TEXT: u32 = 0x1C202A;
+const WIN_MUTED: u32 = 0x5A6472;
+const ROW_SEL: u32 = 0xCBE3FF;
+const SHADOW: u32 = 0x0B0E13;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum WinKind { Perf, Files, View, About, Usb }
+enum App { Perf, Files, View, Usb, About }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Window {
-    kind: WinKind,
-    title: &'static str,
-    pos: usize,
+#[derive(Clone, Copy)]
+struct Win {
+    app: App,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    scroll: usize,
 }
 
-/// 窗口固定在右侧 2x2 网格，左侧留给桌面图标
-const WIN_POS: [(usize, usize); 4] = [(16, 2), (48, 2), (16, 13), (48, 13)];
-const WIN_W: usize = 30;
-const WIN_H: usize = 10;
+#[derive(Clone, Copy)]
+struct Rect { x: i32, y: i32, w: i32, h: i32 }
 
-const MENU_EN: [&str; 6] = [
-    "Performance Monitor", "File Explorer", "USB Devices",
-    "About MLOS", "Language en / zh", "Exit to Shell",
-];
-const MENU_ZH: [&str; 6] = [
-    "性能监视器", "文件管理器", "USB 设备",
-    "关于 MLOS", "切换语言 en / zh", "退出到命令行",
-];
-const ICON_EN: [&str; 5] = ["Perf", "Files", "USB", "About", "Exit"];
-const ICON_ZH: [&str; 5] = ["性能", "文件", "USB", "关于", "退出"];
-
-fn menu_label(i: usize) -> &'static str { crate::tr!(MENU_EN[i], MENU_ZH[i]) }
-fn icon_label(i: usize) -> &'static str { crate::tr!(ICON_EN[i], ICON_ZH[i]) }
-
-/// 全屏单元格网格：字符码 + 颜色（fg<<4 | bg）
-struct Screen {
-    ch: [[u8; WIDTH]; HEIGHT],
-    col: [[u8; WIDTH]; HEIGHT],
-}
-
-impl Screen {
-    fn new() -> Self {
-        Screen {
-            ch: [[b' '; WIDTH]; HEIGHT],
-            col: [[(Color::Black.code() << 4) | Color::Blue.code(); WIDTH]; HEIGHT],
-        }
-    }
-
-    fn put(&mut self, row: usize, col: usize, ch: u8, fg: Color, bg: Color) {
-        if row >= HEIGHT || col >= WIDTH { return; }
-        self.ch[row][col] = ch;
-        self.col[row][col] = (fg.code() << 4) | bg.code();
-    }
-
-    /// 写入文本：ASCII 直写；UTF-8 汉字经字库映射为两个字符码
-    fn text(&mut self, row: usize, col: usize, s: &str, fg: Color, bg: Color) {
-        let bytes = s.as_bytes();
-        let mut c = col;
-        let mut i = 0usize;
-        while i < bytes.len() {
-            let b = bytes[i];
-            if b < 0x80 {
-                self.put(row, c, b, fg, bg);
-                c += 1;
-                i += 1;
-            } else if b < 0xE0 {
-                i += 2;
-            } else if b < 0xF0 && i + 2 < bytes.len() {
-                let cp = ((b as u32 & 0x0F) << 12)
-                    | ((bytes[i + 1] as u32 & 0x3F) << 6)
-                    | (bytes[i + 2] as u32 & 0x3F);
-                if vga::lang_zh() {
-                    match crate::zhfont::glyph_bytes(cp) {
-                        Some((lo, hi)) => {
-                            self.put(row, c, lo, fg, bg);
-                            self.put(row, c + 1, hi, fg, bg);
-                            c += 2;
-                        }
-                        None => { self.put(row, c, b'?', fg, bg); c += 1; }
-                    }
-                }
-                i += 3;
-            } else { i += 1; }
-        }
-    }
-
-    fn fill(&mut self, row: usize, col: usize, len: usize, ch: u8, fg: Color, bg: Color) {
-        for i in 0..len { self.put(row, col + i, ch, fg, bg); }
-    }
-
-    /// 把网格刷新到 VGA；鼠标光标以反色字符叠加
-    fn flush(&self) {
-        vga::with_writer(|w| {
-            let (mc, mr) = (mouse::col(), mouse::row());
-            for row in 0..HEIGHT {
-                let mut col = 0usize;
-                while col < WIDTH {
-                    if row == mr && col == mc {
-                        w.set_color(Color::Black, Color::White);
-                        w.put_byte(b'+');
-                        col += 1;
-                        continue;
-                    }
-                    let c = self.col[row][col];
-                    let fg = unsafe { core::mem::transmute::<u8, Color>((c >> 4) & 0x0F) };
-                    let bg = unsafe { core::mem::transmute::<u8, Color>(c & 0x0F) };
-                    w.set_color(fg, bg);
-                    while col < WIDTH
-                        && !(row == mr && col == mc)
-                        && self.col[row][col] == c
-                    {
-                        w.put_byte(self.ch[row][col]);
-                        col += 1;
-                    }
-                }
-                w.put_byte(b'\n');
-            }
-        });
+impl Rect {
+    fn contains(&self, x: i32, y: i32) -> bool {
+        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
     }
 }
 
 struct Gui {
-    wins: [Option<Window>; 4],
-    focused: usize,
+    wins: [Option<Win>; 4],
+    order: [usize; 4],
+    nwin: usize,
+    focus: usize,
     menu_open: bool,
     menu_sel: usize,
     files_sel: usize,
-    view_name: [u8; 30],
+    view_name: [u8; 32],
     view_len: usize,
+    drag: Option<(usize, i32, i32)>,
+}
+
+const MENU_LEN: usize = 7;
+
+fn menu_label(i: usize) -> &'static str {
+    let zh = vga::lang_zh();
+    match i {
+        0 => if zh { "性能监视器" } else { "Performance Monitor" },
+        1 => if zh { "文件管理器" } else { "File Manager" },
+        2 => if zh { "USB 设备" } else { "USB Devices" },
+        3 => if zh { "关于 MLOS" } else { "About MLOS" },
+        4 => if zh { "终端（返回 Shell）" } else { "Terminal (back to Shell)" },
+        5 => if zh { "切换语言 EN / 中文" } else { "Switch language EN / 中文" },
+        _ => if zh { "重新启动" } else { "Reboot" },
+    }
+}
+
+fn icon_label(i: usize) -> &'static str {
+    let zh = vga::lang_zh();
+    match i {
+        0 => if zh { "性能" } else { "Perf" },
+        1 => if zh { "文件" } else { "Files" },
+        2 => if zh { "USB" } else { "USB" },
+        3 => if zh { "关于" } else { "About" },
+        _ => if zh { "终端" } else { "Terminal" },
+    }
+}
+
+fn app_title(app: App) -> &'static str {
+    let zh = vga::lang_zh();
+    match app {
+        App::Perf => if zh { "性能监视器" } else { "Performance Monitor" },
+        App::Files => if zh { "文件管理器" } else { "File Manager" },
+        App::View => if zh { "文件查看器" } else { "File Viewer" },
+        App::Usb => if zh { "USB 设备" } else { "USB Devices" },
+        App::About => if zh { "关于 MLOS" } else { "About MLOS" },
+    }
+}
+
+struct Buf<const N: usize> { d: [u8; N], n: usize }
+
+impl<const N: usize> Buf<N> {
+    fn new() -> Self { Self { d: [0; N], n: 0 } }
+    fn s(&self) -> &str { core::str::from_utf8(&self.d[..self.n]).unwrap_or("") }
+}
+
+impl<const N: usize> fmt::Write for Buf<N> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for b in s.bytes() {
+            if self.n < N { self.d[self.n] = b; self.n += 1; }
+        }
+        Ok(())
+    }
+}
+
+fn text(x: i32, y: i32, s: &str, fg: u32, bg: u32) {
+    fb::draw_text(x, y, s, fg, bg);
+}
+
+fn text_center(y: i32, s: &str, fg: u32, bg: u32) {
+    let w = crate::font::text_width(s) as i32;
+    text((fb::width() as i32 - w) / 2, y, s, fg, bg);
+}
+
+fn icon_rect(i: usize) -> Rect {
+    Rect { x: 18, y: 52 + i as i32 * 82, w: 110, h: 66 }
+}
+
+fn menu_rect() -> Rect {
+    Rect { x: 66, y: 30, w: 286, h: MENU_LEN as i32 * 30 + 10 }
+}
+
+fn start_rect() -> Rect { Rect { x: 8, y: fb::height() as i32 - TASKBAR_H + 4, w: 84, h: 22 } }
+fn apps_rect() -> Rect { Rect { x: 120, y: 3, w: 86, h: 22 } }
+fn lang_rect() -> Rect { Rect { x: 212, y: 3, w: 98, h: 22 } }
+
+fn draw_icon(i: usize, x: i32, y: i32, hover: bool, bg: u32) {
+    let tile = if hover { 0x2E3B52 } else { 0x222A38 };
+    fb::fill_rect(x, y, 56, 56, tile);
+    fb::fill_rect(x + 1, y + 1, 54, 54, if hover { 0x34435C } else { 0x252E3D });
+    let fg = if hover { TEXT } else { 0xC9D2E2 };
+    match i {
+        0 => {
+            fb::fill_rect(x + 12, y + 12, 6, 28, GREEN);
+            fb::fill_rect(x + 24, y + 20, 6, 20, ACCENT);
+            fb::fill_rect(x + 36, y + 28, 6, 12, YELLOW);
+            fb::draw_hline(x + 10, y + 42, 36, fg);
+        }
+        1 => {
+            fb::fill_rect(x + 10, y + 16, 36, 26, YELLOW);
+            fb::fill_rect(x + 10, y + 12, 16, 8, YELLOW);
+            fb::fill_rect(x + 13, y + 19, 30, 20, 0x2B3242);
+            fb::draw_hline(x + 10, y + 42, 36, YELLOW);
+        }
+        2 => {
+            fb::draw_line(x + 14, y + 42, x + 14, y + 18, fg);
+            fb::draw_line(x + 36, y + 42, x + 36, y + 18, fg);
+            fb::draw_line(x + 25, y + 18, x + 25, y + 42, fg);
+            fb::draw_line(x + 25, y + 28, x + 14, y + 36, fg);
+            fb::draw_line(x + 25, y + 28, x + 36, y + 36, fg);
+            fb::fill_rect(x + 11, y + 14, 6, 6, fg);
+            fb::fill_rect(x + 33, y + 14, 6, 6, fg);
+            fb::fill_rect(x + 22, y + 39, 6, 6, fg);
+        }
+        3 => {
+            fb::fill_rect(x + 28, y + 11, 3, 24, fg);
+            fb::fill_rect(x + 24, y + 9, 11, 3, fg);
+            fb::fill_rect(x + 19, y + 35, 20, 3, fg);
+            text(x + 22, y + 14, "i", bg, fg);
+        }
+        _ => {
+            fb::fill_rect(x + 9, y + 12, 38, 30, 0x10141C);
+            text(x + 12, y + 16, ">_", fg, 0x10141C);
+        }
+    }
+    let label = icon_label(i);
+    let w = crate::font::text_width(label) as i32;
+    text(x + (56 - w) / 2, y + 60, label, TEXT, bg);
+}
+
+impl Gui {
+    fn new() -> Self {
+        let mut g = Self {
+            wins: [None; 4],
+            order: [0; 4],
+            nwin: 0,
+            focus: 0,
+            menu_open: false,
+            menu_sel: 0,
+            files_sel: 0,
+            view_name: [0; 32],
+            view_len: 0,
+            drag: None,
+        };
+        g.open(App::About);
+        g
+    }
+
+    fn focused_slot(&self) -> Option<usize> {
+        if self.nwin == 0 { None } else { Some(self.order[self.nwin - 1]) }
+    }
+
+    fn raise(&mut self, slot: usize) {
+        if self.nwin == 0 { return; }
+        if self.order[self.nwin - 1] == slot { self.focus = slot; return; }
+        let mut pos = None;
+        for i in 0..self.nwin { if self.order[i] == slot { pos = Some(i); break; } }
+        if let Some(p) = pos {
+            for i in p..self.nwin - 1 { self.order[i] = self.order[i + 1]; }
+            self.order[self.nwin - 1] = slot;
+        }
+        self.focus = slot;
+    }
+
+    fn remove(&mut self, slot: usize) {
+        let mut pos = None;
+        for i in 0..self.nwin { if self.order[i] == slot { pos = Some(i); break; } }
+        if let Some(p) = pos {
+            for i in p..self.nwin - 1 { self.order[i] = self.order[i + 1]; }
+            self.nwin -= 1;
+        }
+        self.wins[slot] = None;
+        if self.nwin > 0 { self.focus = self.order[self.nwin - 1]; } else { self.focus = 0; }
+    }
+
+    fn open(&mut self, app: App) {
+        let slot = if let Some(s) = self.wins.iter().position(|w| w.is_none()) {
+            s
+        } else if self.nwin > 0 {
+            let s = self.order[0];
+            self.remove(s);
+            s
+        } else { 0 };
+
+        let sw = fb::width() as i32;
+        let sh = fb::height() as i32;
+        let w = (sw - 120).min(520).max(360);
+        let h = (sh - 140).min(380).max(260);
+        let idx = self.nwin as i32;
+        let mut x = 190 + idx * 34;
+        let mut y = 70 + idx * 34;
+        if x + w > sw - 20 { x = sw - w - 20; }
+        if y + h > sh - TASKBAR_H - 10 { y = sh - TASKBAR_H - h - 10; }
+        if x < 140 { x = 140; }
+        if y < PANEL_H + 10 { y = PANEL_H + 10; }
+
+        self.wins[slot] = Some(Win {
+            app,
+            x, y, w, h,
+            scroll: 0,
+        });
+        self.order[self.nwin] = slot;
+        self.nwin += 1;
+        self.raise(slot);
+    }
+
+    fn set_view_name(&mut self, name: &str) {
+        self.view_name = [0; 32];
+        let n = name.len().min(31);
+        self.view_name[..n].copy_from_slice(&name.as_bytes()[..n]);
+        self.view_len = n;
+    }
+
+    fn view_name_str(&self) -> &str {
+        core::str::from_utf8(&self.view_name[..self.view_len]).unwrap_or("")
+    }
+
+    fn count_files(&self) -> usize {
+        fs::list().map(|(_, c)| c as usize).unwrap_or(0)
+    }
+
+    fn nth_file(&self, i: usize) -> Option<&'static str> {
+        static mut NAMES: [[u8; 30]; 12] = [[0; 30]; 12];
+        static mut COUNT: usize = 0;
+        unsafe {
+            let (entries, count) = fs::list()?;
+            COUNT = count;
+            for (idx, e) in entries.iter().flatten().enumerate() { NAMES[idx] = e.name; }
+            if i < COUNT {
+                let len = NAMES[i].iter().position(|&b| b == 0).unwrap_or(30);
+                Some(core::str::from_utf8(&NAMES[i][..len]).unwrap_or(""))
+            } else { None }
+        }
+    }
+}
+
+fn draw_panel(g: &Gui, mx: i32, my: i32) {
+    let w = fb::width() as i32;
+    fb::fill_rect(0, 0, w, PANEL_H, PANEL);
+    fb::draw_hline(0, PANEL_H - 1, w, 0x141821);
+    text(10, 6, "MLOS Desktop", GREEN, PANEL);
+
+    let ab = apps_rect();
+    let abg = if ab.contains(mx, my) || g.menu_open { 0x34435C } else { 0x2B3342 };
+    fb::fill_rect(ab.x, ab.y, ab.w, ab.h, abg);
+    let alabel = crate::tr!("[Apps]", "[应用]");
+    text(ab.x + (ab.w - crate::font::text_width(alabel) as i32) / 2, ab.y + 3, alabel, TEXT, abg);
+
+    let lb = lang_rect();
+    let lbg = if lb.contains(mx, my) { 0x34435C } else { 0x2B3342 };
+    fb::fill_rect(lb.x, lb.y, lb.w, lb.h, lbg);
+    text(lb.x + 8, lb.y + 3, "[EN/中]", TEXT, lbg);
+
+    let title = crate::tr!("MLOS Desktop", "MLOS 桌面");
+    let tw = crate::font::text_width(title) as i32;
+    text((w - tw) / 2, 6, title, MUTED, PANEL);
+
+    let t = rtc::now();
+    let mut b = Buf::<16>::new();
+    let time = if t.hour <= 23 && t.minute <= 59 && t.second <= 59 {
+        let _ = write!(b, "{:02}:{:02}:{:02}", t.hour, t.minute, t.second);
+        b.s()
+    } else { "--:--:--" };
+    let cw = crate::font::text_width(time) as i32;
+    text(w - cw - 12, 6, time, TEXT, PANEL);
+}
+
+fn draw_desktop(g: &Gui, mx: i32, my: i32) {
+    let w = fb::width() as i32;
+    let h = fb::height() as i32;
+    fb::clear(BG);
+    // 壁纸：淡色 MLOS 标记与细网格
+    for y in (PANEL_H + 24..h - TASKBAR_H).step_by(64) {
+        fb::draw_hline(0, y, w, 0x202632);
+    }
+    let mark = "MLOS  Minimal Light Operating System";
+    let mw = crate::font::text_width(mark) as i32;
+    text((w - mw) / 2, h / 2 - 60, mark, 0x2C3444, BG);
+
+    for i in 0..5 {
+        let r = icon_rect(i);
+        draw_icon(i, r.x + 6, r.y, r.contains(mx, my), BG);
+    }
+    let _ = g;
+}
+
+fn draw_menu(g: &Gui, mx: i32, my: i32) {
+    if !g.menu_open { return; }
+    let r = menu_rect();
+    fb::fill_rect(r.x + 6, r.y + 6, r.w, r.h, SHADOW);
+    fb::fill_rect(r.x, r.y, r.w, r.h, PANEL);
+    fb::fill_rect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 0x2B3342);
+    for i in 0..MENU_LEN {
+        let y = r.y + 5 + i as i32 * 30;
+        let item = Rect { x: r.x + 5, y, w: r.w - 10, h: 28 };
+        let sel = item.contains(mx, my) || i == g.menu_sel;
+        let bg = if sel { ACCENT } else { 0x2B3342 };
+        fb::fill_rect(item.x, item.y, item.w, item.h, bg);
+        text(item.x + 10, item.y + 5, menu_label(i), if sel { 0xFFFFFF } else { TEXT }, bg);
+        if i == 4 || i == 6 {
+            fb::draw_hline(item.x + 8, item.y + 27, item.w - 16, if sel { 0xFFFFFF } else { 0x3A4A63 });
+        }
+    }
+}
+
+fn draw_window(g: &Gui, win: &Win, focused: bool, mx: i32, my: i32) {
+    let x = win.x;
+    let y = win.y;
+    fb::fill_rect(x + 6, y + 6, win.w, win.h, SHADOW);
+    fb::fill_rect(x, y, win.w, win.h, if focused { ACCENT } else { 0x55606F });
+    let tbg = if focused { 0x34435C } else { 0x2A303B };
+    fb::fill_rect(x + 2, y + 2, win.w - 4, 24, tbg);
+    text(x + 10, y + 5, app_title(win.app), TEXT, tbg);
+
+    let close = Rect { x: x + win.w - 24, y: y + 3, w: 19, h: 19 };
+    let cbg = if close.contains(mx, my) { RED } else { if focused { 0x44546F } else { 0x3A414E } };
+    fb::fill_rect(close.x, close.y, close.w, close.h, cbg);
+    text(close.x + 6, close.y + 2, "x", 0xFFFFFF, cbg);
+
+    fb::fill_rect(x + 2, y + 26, win.w - 4, win.h - 28, WIN_BG);
+    draw_app(g, win, x + 10, y + 34, win.w - 20, win.h - 44);
+}
+
+fn draw_app(g: &Gui, win: &Win, x: i32, y: i32, w: i32, h: i32) {
+    let bottom = y + h;
+    match win.app {
+        App::Perf => draw_perf(x, y, w, bottom),
+        App::Files => draw_files(g, win, x, y, w, bottom),
+        App::View => draw_view(g, win, x, y, w, bottom),
+        App::Usb => draw_usb(x, y, bottom),
+        App::About => draw_about(x, y, bottom),
+    }
+}
+
+fn draw_perf(x: i32, y: i32, w: i32, bottom: i32) {
+    let cpu = hw::cpu();
+    let vendor = hw::vendor_str(&cpu);
+    let info = perf::cpu_info();
+    let mem = perf::mem_info();
+    let disk = perf::disk_info();
+    let bh = Buf::<64>::new();
+    let mut yy = y;
+    let mut b = bh;
+    if vga::lang_zh() { let _ = write!(b, "处理器  : {}", vendor); }
+    else { let _ = write!(b, "CPU     : {}", vendor); }
+    text(x, yy, b.s(), WIN_TEXT, WIN_BG); yy += 20;
+    b = Buf::new();
+    if vga::lang_zh() { let _ = write!(b, "TSC     : ~{} MHz", info.tsc_hz / 1_000_000); }
+    else { let _ = write!(b, "TSC     : ~{} MHz", info.tsc_hz / 1_000_000); }
+    text(x, yy, b.s(), WIN_TEXT, WIN_BG); yy += 20;
+    b = Buf::new();
+    if vga::lang_zh() {
+        let _ = write!(b, "内存    : {} MiB / 内核 {} KiB", mem.total_kib / 1024, mem.kernel_kib);
+    } else {
+        let _ = write!(b, "Memory  : {} MiB total / {} KiB kernel", mem.total_kib / 1024, mem.kernel_kib);
+    }
+    text(x, yy, b.s(), WIN_TEXT, WIN_BG); yy += 20;
+    b = Buf::new();
+    let use_pct = if mem.total_kib > 0 {
+        ((mem.kernel_kib * 100) / mem.total_kib).min(100) as i32
+    } else { 0 };
+    if vga::lang_zh() { let _ = write!(b, "使用率  : {}%", use_pct); }
+    else { let _ = write!(b, "Mem use : {}%", use_pct); }
+    text(x, yy, b.s(), WIN_TEXT, WIN_BG); yy += 18;
+    // 内存条
+    let bar_w = w - 120;
+    fb::fill_rect(x, yy, bar_w, 12, 0xD8DEE8);
+    fb::fill_rect(x, yy, bar_w * use_pct / 100, 12, ACCENT);
+    yy += 24;
+    b = Buf::new();
+    if vga::lang_zh() {
+        let _ = write!(b, "硬盘    : {} MiB / 已用 {} 扇区", disk.total_sectors / 2048, disk.used_sectors);
+    } else {
+        let _ = write!(b, "Disk    : {} MiB / used {} sectors", disk.total_sectors / 2048, disk.used_sectors);
+    }
+    text(x, yy, b.s(), WIN_TEXT, WIN_BG); yy += 20;
+    b = Buf::new();
+    let pct = if disk.total_sectors > 0 { (disk.used_sectors * 100 / disk.total_sectors).min(100) as i32 } else { 0 };
+    if vga::lang_zh() { let _ = write!(b, "硬盘使用: {}%", pct); }
+    else { let _ = write!(b, "Disk use: {}%", pct); }
+    text(x, yy, b.s(), WIN_TEXT, WIN_BG); yy += 18;
+    let bar_w = w - 120;
+    fb::fill_rect(x, yy, bar_w, 12, 0xD8DEE8);
+    fb::fill_rect(x, yy, bar_w * pct / 100, 12, GREEN);
+    yy += 24;
+    b = Buf::new();
+    let boot = if vga::lang_zh() {
+        if installer::is_installed() { "硬盘引导已安装" } else { "仅 ISO（可运行 bootinstall）" }
+    } else if installer::is_installed() { "disk boot installed" } else { "ISO only (run bootinstall)" };
+    if vga::lang_zh() { let _ = write!(b, "启动    : {}", boot); }
+    else { let _ = write!(b, "Boot    : {}", boot); }
+    text(x, yy, b.s(), WIN_MUTED, WIN_BG);
+    let _ = bottom;
+}
+
+fn draw_files(g: &Gui, win: &Win, x: i32, y: i32, w: i32, bottom: i32) {
+    let user = crate::shell::current_user();
+    let mut b = Buf::<48>::new();
+    let _ = write!(b, "~/home/{}", user);
+    text(x, y, b.s(), WIN_MUTED, WIN_BG);
+    fb::draw_hline(x, y + 18, w, 0xC9D1DC);
+    text(x, y + 24, if vga::lang_zh() { "名称" } else { "NAME" }, WIN_MUTED, WIN_BG);
+    text(x + w - 90, y + 24, if vga::lang_zh() { "大小" } else { "SIZE" }, WIN_MUTED, WIN_BG);
+    fb::draw_hline(x, y + 42, w, 0xC9D1DC);
+
+    let (entries, count) = match fs::list() {
+        Some(v) => v,
+        None => ([None; 12], 0),
+    };
+    let row_h = 20;
+    if count == 0 {
+        text(x, y + 50, if vga::lang_zh() { "（空，使用 write 命令创建文件）" } else { "(empty - use 'write <name> <text>')" }, WIN_MUTED, WIN_BG);
+    }
+    let mut idx = 0usize;
+    for e in entries.iter().flatten() {
+        let ry = y + 48 + (idx.saturating_sub(win.scroll) as i32) * row_h;
+        if idx >= win.scroll && ry + row_h <= bottom - 22 {
+            let selected = idx == g.files_sel;
+            let bg = if selected { ROW_SEL } else { WIN_BG };
+            if selected { fb::fill_rect(x - 4, ry - 2, w + 8, row_h, ROW_SEL); }
+            text(x, ry, e.name_str(), if selected { WIN_TEXT } else { WIN_TEXT }, bg);
+            let mut sb = Buf::<24>::new();
+            let _ = write!(sb, "{} B", e.size);
+            text(x + w - 90, ry, sb.s(), WIN_MUTED, bg);
+        }
+        idx += 1;
+    }
+    let hint = if vga::lang_zh() {
+        "点击 / Enter 打开 · D 删除 · 上下 选择"
+    } else {
+        "Click / Enter open · D delete · Up/Down select"
+    };
+    text(x, bottom - 18, hint, WIN_MUTED, WIN_BG);
+}
+
+fn view_text(g: &Gui) -> ([u8; 4096], usize) {
+    let mut buf = [0u8; 4096];
+    let n = fs::read(g.view_name_str(), &mut buf).unwrap_or(0);
+    (buf, n)
+}
+
+fn count_wrapped(text: &str, maxw: i32) -> usize {
+    let mut lines = 1usize;
+    let mut cx = 0i32;
+    for ch in text.chars() {
+        if ch == '\n' { lines += 1; cx = 0; continue; }
+        let cw = crate::font::char_width(ch as u32) as i32;
+        if cx + cw > maxw { lines += 1; cx = 0; }
+        cx += cw;
+    }
+    lines
+}
+
+fn draw_view(g: &Gui, win: &Win, x: i32, y: i32, w: i32, bottom: i32) {
+    let (buf, n) = view_text(g);
+    let txt = core::str::from_utf8(&buf[..n]).unwrap_or("(binary data)");
+    let mut b = Buf::<48>::new();
+    let _ = write!(b, "{} ({} bytes)", g.view_name_str(), n);
+    text(x, y, b.s(), WIN_MUTED, WIN_BG);
+    fb::draw_hline(x, y + 18, w, 0xC9D1DC);
+
+    let maxw = w - 18;
+    let total = count_wrapped(txt, maxw);
+    let visible = ((bottom - y - 60) / 16).max(1) as usize;
+    let scroll = win.scroll.min(total.saturating_sub(1));
+    let mut line = 0usize;
+    let mut cx = x;
+    let mut cy = y + 26;
+    for ch in txt.chars() {
+        if ch == '\n' {
+            line += 1; cx = x; cy += 16;
+            if cy + 16 > bottom - 20 { break; }
+            continue;
+        }
+        if ch == '\r' { continue; }
+        let cw = crate::font::char_width(ch as u32) as i32;
+        if cx + cw > x + maxw {
+            line += 1; cx = x; cy += 16;
+            if cy + 16 > bottom - 20 { break; }
+        }
+        if line >= scroll {
+            let mut tmp = [0u8; 4];
+            let s = ch.encode_utf8(&mut tmp);
+            text(cx, cy, s, WIN_TEXT, WIN_BG);
+        }
+        cx += cw;
+    }
+    let mut hint = Buf::<80>::new();
+    if vga::lang_zh() {
+        let _ = write!(hint, "行 {}/{} · 上下滚动 · Esc 关闭", scroll + 1, total);
+    } else {
+        let _ = write!(hint, "line {}/{} · Up/Down scroll · Esc close", scroll + 1, total);
+    }
+    text(x, bottom - 18, hint.s(), WIN_MUTED, WIN_BG);
+    let _ = visible;
+}
+
+fn draw_usb(x: i32, y: i32, bottom: i32) {
+    let n = usb::count();
+    let mut b = Buf::<64>::new();
+    if !usb::is_scanned() {
+        let _ = write!(b, "{}", if vga::lang_zh() { "总线尚未扫描。" } else { "Bus not scanned yet." });
+    } else if n == 0 {
+        let _ = write!(b, "{}", if vga::lang_zh() { "未检测到 USB 主控。" } else { "No USB host controller detected." });
+    } else {
+        if vga::lang_zh() { let _ = write!(b, "{} 个 USB 主控 - USB 1.0..3.2", n); }
+        else { let _ = write!(b, "{} USB host controller(s) - USB 1.0..3.2", n); }
+    }
+    text(x, y, b.s(), WIN_TEXT, WIN_BG);
+    let mut yy = y + 26;
+    let mut idx = 0usize;
+    usb::each(|c| {
+        idx += 1;
+        if yy + 16 < bottom - 20 {
+            let mut line = Buf::<96>::new();
+            let _ = write!(line, "[{}] {:02X}:{:02X}.{} {}", c.kind, c.bus, c.device, c.function, c.speed.label());
+            text(x, yy, line.s(), WIN_TEXT, WIN_BG);
+            yy += 22;
+        }
+    });
+    if idx == 0 && usb::is_scanned() {
+        text(x, yy, if vga::lang_zh() { "可在 Shell 运行 usb 命令完整扫描。" } else { "Run 'usb' in the shell for a full scan." }, WIN_MUTED, WIN_BG);
+    }
+}
+
+fn draw_about(x: i32, y: i32, bottom: i32) {
+    let zh = vga::lang_zh();
+    let lines: [&str; 9] = [
+        "MLOS - Minimal Light Operating System",
+        if zh { "版本 1.0.6  x86_64  Rust no_std" } else { "Version 1.0.6  x86_64  Rust no_std" },
+        if zh { "开发者: MEME-LMXDG" } else { "Developer: MEME-LMXDG" },
+        "",
+        if zh { "帧缓冲控制台 + 中文点阵字体" } else { "Framebuffer console + bitmap CJK font" },
+        if zh { "鼠标驱动的窗口管理器" } else { "Mouse-driven window manager" },
+        if zh { "ATA PIO 存储 / MiniFS 文件系统" } else { "ATA PIO storage / MiniFS" },
+        if zh { "安装向导内置硬件检测" } else { "Hardware check in setup wizard" },
+        if zh { "Esc: 关闭窗口 / 退出桌面" } else { "Esc: close window / quit desktop" },
+    ];
+    let mut yy = y;
+    for (i, s) in lines.iter().enumerate() {
+        if yy + 16 > bottom - 10 { break; }
+        let fg = if i == 0 { ACCENT } else if i == 2 { WIN_MUTED } else { WIN_TEXT };
+        text(x, yy, s, fg, WIN_BG);
+        yy += 20;
+    }
+}
+
+fn draw_taskbar(g: &Gui, mx: i32, my: i32) {
+    let w = fb::width() as i32;
+    let h = fb::height() as i32;
+    let top = h - TASKBAR_H;
+    fb::fill_rect(0, top, w, TASKBAR_H, PANEL_DARK);
+    fb::draw_hline(0, top, w, 0x10141C);
+
+    let sr = start_rect();
+    let sbg = if sr.contains(mx, my) || g.menu_open { 0x34435C } else { 0x252C39 };
+    fb::fill_rect(sr.x, sr.y, sr.w, sr.h, sbg);
+    let slabel = crate::tr!("[Start]", "[开始]");
+    text(sr.x + (sr.w - crate::font::text_width(slabel) as i32) / 2, sr.y + 3, slabel, TEXT, sbg);
+
+    let mut bx = 100;
+    for i in 0..g.nwin {
+        let slot = g.order[i];
+        if let Some(win) = g.wins[slot] {
+            let r = Rect { x: bx, y: top + 4, w: 132, h: 22 };
+            let active = slot == g.focused_slot().unwrap_or(usize::MAX);
+            let bg = if r.contains(mx, my) { 0x34435C } else if active { 0x2E3A4E } else { 0x252C39 };
+            fb::fill_rect(r.x, r.y, r.w, r.h, bg);
+            let title = app_title(win.app);
+            text(r.x + 8, r.y + 3, title, if active { TEXT } else { MUTED }, bg);
+            bx += 136;
+        }
+    }
+    let hint = crate::tr!("Esc close · M menu · Tab focus", "Esc 关闭 · M 菜单 · Tab 切换");
+    let hw = crate::font::text_width(hint) as i32;
+    if bx + hw + 20 < w {
+        text(w - hw - 12, top + 7, hint, MUTED, PANEL_DARK);
+    }
+}
+
+fn draw_all(g: &Gui) {
+    let mx = mouse::x();
+    let my = mouse::y();
+    draw_desktop(g, mx, my);
+    for i in 0..g.nwin {
+        let slot = g.order[i];
+        if let Some(win) = g.wins[slot] {
+            draw_window(g, &win, slot == g.focused_slot().unwrap_or(usize::MAX), mx, my);
+        }
+    }
+    draw_panel(g, mx, my);
+    draw_taskbar(g, mx, my);
+    draw_menu(g, mx, my);
+}
+
+fn activate(g: &mut Gui, app: App) -> bool {
+    match app {
+        App::Files => g.open(App::Files),
+        App::Perf => g.open(App::Perf),
+        App::Usb => g.open(App::Usb),
+        App::About => g.open(App::About),
+        App::View => {}
+    }
+    false
+}
+
+fn activate_icon(g: &mut Gui, i: usize) -> bool {
+    match i {
+        0 => activate(g, App::Perf),
+        1 => activate(g, App::Files),
+        2 => activate(g, App::Usb),
+        3 => activate(g, App::About),
+        _ => true, // Terminal: 返回 Shell
+    }
+}
+
+fn activate_menu(g: &mut Gui, i: usize) -> bool {
+    match i {
+        0 => activate(g, App::Perf),
+        1 => activate(g, App::Files),
+        2 => activate(g, App::Usb),
+        3 => activate(g, App::About),
+        4 => return true,
+        5 => {
+            vga::set_lang(!vga::lang_zh());
+            false
+        }
+        _ => {
+            crate::println!("Rebooting...");
+            unsafe { crate::io::outb(0x64, 0xFE); }
+            crate::halt_loop();
+        }
+    }
+}
+
+fn open_view(g: &mut Gui, idx: usize) {
+    if let Some(name) = g.nth_file(idx) {
+        g.files_sel = idx;
+        g.set_view_name(name);
+        g.open(App::View);
+    }
+}
+
+fn handle_click(g: &mut Gui, cx: i32, cy: i32) -> bool {
+    let mx = cx;
+    let my = cy;
+
+    if g.menu_open {
+        let r = menu_rect();
+        if r.contains(mx, my) {
+            let i = ((my - r.y - 5) / 30) as usize;
+            if i < MENU_LEN {
+                g.menu_open = false;
+                return activate_menu(g, i);
+            }
+        } else {
+            g.menu_open = false;
+        }
+    }
+
+    if apps_rect().contains(mx, my) || start_rect().contains(mx, my) {
+        g.menu_open = !g.menu_open;
+        g.menu_sel = 0;
+        return false;
+    }
+    if lang_rect().contains(mx, my) {
+        vga::set_lang(!vga::lang_zh());
+        return false;
+    }
+
+    // 任务栏窗口按钮
+    if cy >= fb::height() as i32 - TASKBAR_H {
+        let mut bx = 100;
+        for i in 0..g.nwin {
+            let slot = g.order[i];
+            if g.wins[slot].is_some() {
+                if mx >= bx && mx < bx + 132 {
+                    g.raise(slot);
+                    return false;
+                }
+                bx += 136;
+            }
+        }
+        return false;
+    }
+
+    // 桌面图标
+    for i in 0..5 {
+        if icon_rect(i).contains(mx, my) {
+            return activate_icon(g, i);
+        }
+    }
+
+    // 窗口（从最上层向下）
+    let mut idx = g.nwin;
+    while idx > 0 {
+        idx -= 1;
+        let slot = g.order[idx];
+        let Some(win) = g.wins[slot] else { continue; };
+        if mx >= win.x && mx < win.x + win.w && my >= win.y && my < win.y + win.h {
+            g.raise(slot);
+            if my < win.y + 26 {
+                if mx >= win.x + win.w - 24 {
+                    g.remove(slot);
+                } else {
+                    g.drag = Some((slot, mx - win.x, my - win.y));
+                }
+            } else {
+                match win.app {
+                    App::Files => {
+                        let row_h = 20;
+                        let first = win.y + 34 + 48;
+                        let rel = my - first;
+                        if rel >= 0 {
+                            let sel = rel / row_h;
+                            let fi = win.scroll + sel as usize;
+                            if fi < g.count_files() {
+                                open_view(g, fi);
+                            }
+                        }
+                    }
+                    App::View => {
+                        let mut w2 = win;
+                        if my < win.y + 60 {
+                            w2.scroll = w2.scroll.saturating_sub(3);
+                        } else {
+                            w2.scroll += 3;
+                        }
+                        g.wins[slot] = Some(w2);
+                    }
+                    _ => {}
+                }
+            }
+            return false;
+        }
+    }
+    false
 }
 
 /// 启动桌面。鼠标可用时以鼠标为主，键盘仍可操作。
 pub fn run() {
-    let mut g = Gui {
-        wins: [None; 4],
-        focused: 0,
-        menu_open: false,
-        menu_sel: 0,
-        files_sel: 0,
-        view_name: [0; 30],
-        view_len: 0,
-    };
-    g.wins[0] = Some(Window {
-        kind: WinKind::About,
-        title: crate::tr!("Welcome to MLOS", "欢迎使用 MLOS"),
-        pos: 0,
-    });
+    if !fb::available() {
+        crate::println!("{}", crate::tr!(
+            "Desktop needs a VBE framebuffer (text mode fallback active).",
+            "桌面需要 VBE 帧缓冲（当前为文本模式回退）。"
+        ));
+        return;
+    }
 
+    let mut g = Gui::new();
     let mut kb = Keyboard::new();
     if !mouse::ready() { mouse::init(); }
-    draw(&g);
+    crate::cursor::init();
+    crate::cursor::hide();
+    draw_all(&g);
+    crate::cursor::show();
 
     loop {
-        mouse::update();
+        let moved = mouse::update();
 
-        // ---- 鼠标点击 ----
-        if let Some((col, row, left)) = mouse::take_click() {
-            if left && handle_click(&mut g, col, row) {
-                break;
+        // 拖动窗口
+        if let Some((slot, ox, oy)) = g.drag {
+            if mouse::left_down() {
+                if moved {
+                    if let Some(w) = g.wins[slot].as_mut() {
+                        let sw = fb::width() as i32;
+                        let sh = fb::height() as i32;
+                        w.x = (mouse::x() - ox).clamp(4, sw - w.w - 4);
+                        w.y = (mouse::y() - oy).clamp(PANEL_H + 2, sh - TASKBAR_H - w.h - 2);
+                    }
+                    crate::cursor::hide();
+                    draw_all(&g);
+                    crate::cursor::show();
+                }
+            } else {
+                g.drag = None;
             }
-            draw(&g);
+        } else if moved {
+            crate::cursor::sync();
+            if g.menu_open {
+                crate::cursor::hide();
+                draw_all(&g);
+                crate::cursor::show();
+            }
         }
 
-        // ---- 键盘 ----
+        if let Some((cx, cy, left)) = mouse::take_click() {
+            if left {
+                crate::cursor::hide();
+                let exit = handle_click(&mut g, cx, cy);
+                draw_all(&g);
+                crate::cursor::show();
+                if exit { break; }
+            } else {
+                g.menu_open = false;
+                crate::cursor::hide();
+                draw_all(&g);
+                crate::cursor::show();
+            }
+        }
+
         let sc = match keyboard::read_scancode() {
             Some(s) => s,
-            None => {
-                unsafe { core::arch::asm!("pause"); }
-                continue;
-            }
+            None => { unsafe { core::arch::asm!("pause"); } continue; }
         };
         let key = match kb.handle_scancode(sc) {
             Some(k) => k,
@@ -191,475 +870,105 @@ pub fn run() {
         };
 
         let mut exit = false;
+        let mut redraw = false;
         match key {
             Key::Esc => {
                 if g.menu_open {
                     g.menu_open = false;
-                } else if g.wins[g.focused].is_some() {
-                    g.wins[g.focused] = None;
-                    normalize_focus(&mut g);
+                } else if let Some(slot) = g.focused_slot() {
+                    g.remove(slot);
                 } else {
                     exit = true;
                 }
+                redraw = true;
             }
             Key::Tab => {
-                if g.wins.iter().any(|w| w.is_some()) {
-                    loop {
-                        g.focused = (g.focused + 1) % 4;
-                        if g.wins[g.focused].is_some() { break; }
-                    }
+                if g.nwin > 1 {
+                    g.raise(g.order[0]);
                 }
+                redraw = true;
             }
             Key::Up | Key::Down => {
                 let down = matches!(key, Key::Down);
                 if g.menu_open {
-                    let n = MENU_ITEMS_LEN;
+                    let n = MENU_LEN;
                     g.menu_sel = if down { (g.menu_sel + 1) % n } else { (g.menu_sel + n - 1) % n };
-                } else if let Some(win) = g.wins[g.focused] {
-                    if win.kind == WinKind::Files { move_file_sel(&mut g, down); }
+                } else if let Some(slot) = g.focused_slot() {
+                    if let Some(mut w) = g.wins[slot] {
+                        match w.app {
+                            App::Files => {
+                                let n = g.count_files();
+                                if n > 0 {
+                                    g.files_sel = if down { (g.files_sel + 1) % n } else { (g.files_sel + n - 1) % n };
+                                }
+                            }
+                            App::View => {
+                                w.scroll = if down { w.scroll + 1 } else { w.scroll.saturating_sub(1) };
+                                g.wins[slot] = Some(w);
+                            }
+                            _ => {}
+                        }
+                    }
                 }
+                redraw = true;
             }
-            Key::Left | Key::Right => {}
+            Key::PageDown | Key::PageUp => {
+                if let Some(slot) = g.focused_slot() {
+                    if let Some(mut w) = g.wins[slot] {
+                        if w.app == App::View {
+                            if matches!(key, Key::PageDown) { w.scroll += 10; }
+                            else { w.scroll = w.scroll.saturating_sub(10); }
+                            g.wins[slot] = Some(w);
+                        }
+                    }
+                }
+                redraw = true;
+            }
             Key::Enter => {
                 if g.menu_open {
                     g.menu_open = false;
                     let sel = g.menu_sel;
-                    if activate_menu(&mut g, sel) { exit = true; }
-                } else if let Some(win) = g.wins[g.focused] {
-                    if win.kind == WinKind::Files {
-                        if let Some(name) = nth_file(g.files_sel) {
-                            set_view_name(&mut g, name);
-                            open_window(&mut g, WinKind::View,
-                                crate::tr!("File Viewer", "文件查看器"));
+                    exit = activate_menu(&mut g, sel);
+                } else if let Some(slot) = g.focused_slot() {
+                    if let Some(w) = g.wins[slot] {
+                        if w.app == App::Files {
+                            let fi = g.files_sel;
+                            open_view(&mut g, fi);
                         }
                     }
                 }
+                redraw = true;
             }
             Key::Char(c) => match c {
-                'm' | 'M' => g.menu_open = !g.menu_open,
+                'm' | 'M' => { g.menu_open = !g.menu_open; redraw = true; }
+                'l' | 'L' => { vga::set_lang(!vga::lang_zh()); redraw = true; }
                 'd' | 'D' => {
-                    if let Some(win) = g.wins[g.focused] {
-                        if win.kind == WinKind::Files {
-                            if let Some(name) = nth_file(g.files_sel) {
-                                let _ = fs::delete(name);
-                                let (_, count) = fs::usage();
-                                if g.files_sel >= count as usize && g.files_sel > 0 {
-                                    g.files_sel = (count as usize).saturating_sub(1);
+                    if let Some(slot) = g.focused_slot() {
+                        if let Some(w) = g.wins[slot] {
+                            if w.app == App::Files {
+                                if let Some(name) = g.nth_file(g.files_sel) {
+                                    let _ = fs::delete(name);
+                                    let n = g.count_files();
+                                    if g.files_sel >= n && g.files_sel > 0 { g.files_sel = n.saturating_sub(1); }
                                 }
                             }
                         }
                     }
+                    redraw = true;
                 }
                 _ => {}
             },
-            Key::Backspace => {}
+            _ => {}
         }
+
         if exit { break; }
-        draw(&g);
+        if redraw {
+            crate::cursor::hide();
+            draw_all(&g);
+            crate::cursor::show();
+        }
     }
 
+    crate::cursor::hide();
     vga::with_writer(|w| w.clear());
-}
-
-const MENU_ITEMS_LEN: usize = MENU_EN.len();
-
-fn move_file_sel(g: &mut Gui, down: bool) {
-    let (_, count) = fs::usage();
-    let count = count as usize;
-    if count > 0 {
-        g.files_sel = if down {
-            (g.files_sel + 1) % count
-        } else {
-            (g.files_sel + count - 1) % count
-        };
-    }
-}
-
-/// 鼠标点击命中检测。返回 true 表示退出桌面。
-fn handle_click(g: &mut Gui, col: usize, row: usize) -> bool {
-    // 顶部面板按钮
-    if row == PANEL_ROW {
-        if (20..26).contains(&col) { g.menu_open = !g.menu_open; return false; }
-        if (28..34).contains(&col) {
-            if vga::lang_zh() { vga::set_lang(false); } else { vga::set_lang(true); }
-            return false;
-        }
-    }
-
-    // 下拉菜单
-    if g.menu_open {
-        let top = PANEL_ROW + 1;
-        let w = 24;
-        if col < w && row > top && row <= top + MENU_ITEMS_LEN {
-            let idx = row - top - 1;
-            g.menu_open = false;
-            return activate_menu(g, idx);
-        }
-        // 点击菜单外区域关闭菜单
-        g.menu_open = false;
-    }
-
-    // 任务栏：Start 按钮 + 窗口按钮
-    if row == TASKBAR_ROW {
-        if (1..8).contains(&col) { g.menu_open = true; return false; }
-        let mut cx = 10usize;
-        for (i, win) in g.wins.iter().enumerate() {
-            if let Some(w2) = win {
-                let t = format!("[{}]", w2.title);
-                if col >= cx && col < cx + t.len().min(20) {
-                    g.focused = i;
-                    return false;
-                }
-                cx += t.len().min(20) + 2;
-            }
-        }
-        return false;
-    }
-
-    // 桌面图标（左侧列）
-    for i in 0..5 {
-        let r = 2 + i * 2;
-        if row == r && (2..14).contains(&col) {
-            return activate_icon(g, i);
-        }
-    }
-
-    // 窗口：关闭按钮、标题栏、内容
-    for slot in 0..4 {
-        if let Some(win) = g.wins[slot] {
-            let (x, y) = WIN_POS[slot];
-            if row == y && col >= x && col < x + WIN_W {
-                if col >= x + WIN_W - 4 && col < x + WIN_W - 1 {
-                    g.wins[slot] = None;
-                    normalize_focus(g);
-                } else {
-                    g.focused = slot;
-                }
-                return false;
-            }
-            if row > y && row < y + WIN_H && col >= x && col < x + WIN_W {
-                g.focused = slot;
-                if win.kind == WinKind::Files {
-                    let body_row = row - y;
-                    if body_row >= 3 {
-                        let idx = body_row - 3;
-                        let (_, count) = fs::usage();
-                        if idx < count as usize {
-                            if let Some(name) = nth_file(idx) {
-                                g.files_sel = idx;
-                                set_view_name(g, name);
-                                open_window(g, WinKind::View,
-                                    crate::tr!("File Viewer", "文件查看器"));
-                            }
-                        }
-                    }
-                }
-                return false;
-            }
-        }
-    }
-    false
-}
-
-fn activate_icon(g: &mut Gui, i: usize) -> bool {
-    match i {
-        0 => open_window(g, WinKind::Perf, crate::tr!("Performance", "性能监视器")),
-        1 => open_window(g, WinKind::Files, crate::tr!("Files", "文件管理器")),
-        2 => open_window(g, WinKind::Usb, crate::tr!("USB Devices", "USB 设备")),
-        3 => open_window(g, WinKind::About, crate::tr!("About MLOS", "关于 MLOS")),
-        _ => return true,
-    }
-    false
-}
-
-fn activate_menu(g: &mut Gui, idx: usize) -> bool {
-    match idx {
-        0 => open_window(g, WinKind::Perf, crate::tr!("Performance Monitor", "性能监视器")),
-        1 => open_window(g, WinKind::Files, crate::tr!("File Explorer", "文件管理器")),
-        2 => open_window(g, WinKind::Usb, crate::tr!("USB Devices", "USB 设备")),
-        3 => open_window(g, WinKind::About, crate::tr!("About MLOS", "关于 MLOS")),
-        4 => {
-            if vga::lang_zh() { vga::set_lang(false); } else { vga::set_lang(true); }
-        }
-        _ => return true,
-    }
-    false
-}
-
-fn normalize_focus(g: &mut Gui) {
-    if g.wins[g.focused].is_none() {
-        for i in 0..4 {
-            if g.wins[i].is_some() { g.focused = i; return; }
-        }
-        g.focused = 0;
-    }
-}
-
-fn open_window(g: &mut Gui, kind: WinKind, title: &'static str) {
-    for pos in 0..4 {
-        let occupied = g.wins.iter().flatten().any(|w| w.pos == pos);
-        if !occupied {
-            for slot in 0..4 {
-                if g.wins[slot].is_none() {
-                    g.wins[slot] = Some(Window { kind, title, pos });
-                    g.focused = slot;
-                    return;
-                }
-            }
-        }
-    }
-    let pos = g.wins[g.focused].as_ref().map(|w| w.pos).unwrap_or(0);
-    g.wins[g.focused] = Some(Window { kind, title, pos });
-}
-
-fn set_view_name(g: &mut Gui, name: &str) {
-    g.view_name = [0; 30];
-    let n = name.len().min(29);
-    g.view_name[..n].copy_from_slice(&name.as_bytes()[..n]);
-    g.view_len = n;
-}
-
-fn view_name_str(g: &Gui) -> &str {
-    core::str::from_utf8(&g.view_name[..g.view_len]).unwrap_or("")
-}
-
-fn nth_file(i: usize) -> Option<&'static str> {
-    static mut NAMES: [[u8; 30]; 12] = [[0; 30]; 12];
-    static mut COUNT: usize = 0;
-    unsafe {
-        let (entries, count) = fs::list()?;
-        COUNT = count;
-        for (idx, e) in entries.iter().flatten().enumerate() { NAMES[idx] = e.name; }
-        if i < COUNT {
-            let len = NAMES[i].iter().position(|&b| b == 0).unwrap_or(30);
-            Some(core::str::from_utf8(&NAMES[i][..len]).unwrap_or(""))
-        } else { None }
-    }
-}
-
-// ---------------- drawing ----------------
-
-fn usb_line(r: usize) -> Option<String> {
-    let n = crate::usb::count();
-    let text = match r {
-        1 => {
-            if !crate::usb::is_scanned() {
-                crate::tr!(" Bus not scanned yet.", " 总线尚未扫描。").to_string()
-            } else if n == 0 {
-                crate::tr!(" No USB host controller.", " 未检测到 USB 主控。").to_string()
-            } else {
-                format!(" {} controller(s):", n)
-            }
-        }
-        _ => {
-            let mut idx = 0usize;
-            let mut out: Option<String> = None;
-            crate::usb::each(|c| {
-                idx += 1;
-                let row = 3 + (idx - 1) * 2;
-                if row == r + 1 {
-                    out = Some(format!(" [{} {:X}:{:X}] {}", c.kind, c.bus, c.device, c.speed.label()));
-                }
-            });
-            match out {
-                Some(t) => t,
-                None => {
-                    if r == 7 {
-                        crate::tr!(" USB 1.0 - 3.2 compatible", " 兼容 USB 1.0 - 3.2").to_string()
-                    } else { return None; }
-                }
-            }
-        }
-    };
-    Some(text)
-}
-
-fn draw(g: &Gui) {
-    let mut scr = Screen::new();
-
-    // 顶部面板
-    scr.fill(PANEL_ROW, 0, WIDTH, b' ', Color::White, Color::Blue);
-    scr.text(PANEL_ROW, 1, crate::tr!("MLOS Desktop", "MLOS 桌面"), Color::White, Color::Blue);
-    scr.text(PANEL_ROW, 20, crate::tr!("[Apps]", "[应用]"), Color::Yellow, Color::Blue);
-    scr.text(PANEL_ROW, 28, "[EN/中]", Color::LightGreen, Color::Blue);
-    let lang = if vga::lang_zh() { "中文预览" } else { "English" };
-    scr.text(PANEL_ROW, 50, lang, Color::LightCyan, Color::Blue);
-    let ver = format!("v1.0.6 USB:{}", crate::usb::count());
-    scr.text(PANEL_ROW, WIDTH - ver.len() - 1, &ver, Color::White, Color::Blue);
-
-    // 桌面图标
-    for i in 0..5 {
-        let r = 2 + i * 2;
-        scr.text(r, 2, "[ ]", Color::White, Color::Blue);
-        scr.text(r, 3, icon_label(i), Color::Yellow, Color::Blue);
-    }
-
-    // 窗口
-    for (i, win) in g.wins.iter().enumerate() {
-        if let Some(win) = win { draw_window(&mut scr, g, win, i == g.focused); }
-    }
-
-    // 下拉菜单
-    if g.menu_open {
-        let top = PANEL_ROW + 1;
-        let w = 24;
-        scr.fill(top, 0, w, b'-', Color::White, Color::Blue);
-        for i in 0..MENU_ITEMS_LEN {
-            let row = top + 1 + i;
-            let (fg, bg) = if i == g.menu_sel {
-                (Color::White, Color::Green)
-            } else {
-                (Color::White, Color::Blue)
-            };
-            scr.fill(row, 0, w, b' ', fg, bg);
-            scr.text(row, 1, menu_label(i), fg, bg);
-        }
-        scr.fill(top + MENU_ITEMS_LEN + 1, 0, w, b'-', Color::White, Color::Blue);
-    }
-
-    // 任务栏
-    scr.fill(TASKBAR_ROW, 0, WIDTH, b' ', Color::LightGray, Color::DarkGray);
-    let (sfg, sbg) = if g.menu_open { (Color::White, Color::Brown) } else { (Color::White, Color::Green) };
-    scr.text(TASKBAR_ROW, 1, crate::tr!("[Start]", "[开始]"), sfg, sbg);
-    let mut cx = 10usize;
-    for (i, win) in g.wins.iter().enumerate() {
-        if let Some(w2) = win {
-            let (fg, bg) = if i == g.focused {
-                (Color::White, Color::Blue)
-            } else {
-                (Color::LightGray, Color::DarkGray)
-            };
-            let t = format!("[{}]", w2.title);
-            if cx + t.len() < WIDTH - 20 {
-                scr.text(TASKBAR_ROW, cx, &t, fg, bg);
-                cx += t.len() + 2;
-            }
-        }
-    }
-    let hint = crate::tr!("Click to open | Esc quit", "点击打开 | Esc 退出");
-    scr.text(TASKBAR_ROW, WIDTH - hint.len() - 1, hint, Color::Yellow, Color::DarkGray);
-
-    scr.flush();
-}
-
-fn draw_window(scr: &mut Screen, g: &Gui, win: &Window, focused: bool) {
-    let (x, y) = WIN_POS[win.pos];
-    let (t_fg, t_bg) = if focused {
-        (Color::White, Color::Blue)
-    } else {
-        (Color::Black, Color::LightGray)
-    };
-    let (b_fg, b_bg) = (Color::LightGray, Color::Black);
-    let bd = if focused { Color::White } else { Color::DarkGray };
-
-    // 标题栏（ASCII 边框，避免与中文点阵字模冲突）
-    scr.fill(y, x + 1, WIN_W - 2, b'-', t_fg, t_bg);
-    scr.put(y, x, b'+', t_fg, t_bg);
-    scr.put(y, x + WIN_W - 1, b'+', t_fg, t_bg);
-    let label = format!(" {} ", win.title);
-    scr.text(y, x + 2, &label, t_fg, t_bg);
-    scr.text(y, x + WIN_W - 4, "[X]", Color::Yellow, t_bg);
-
-    for r in 1..WIN_H - 1 {
-        scr.fill(y + r, x + 1, WIN_W - 2, b' ', b_fg, b_bg);
-        scr.put(y + r, x, b'|', bd, b_bg);
-        scr.put(y + r, x + WIN_W - 1, b'|', bd, b_bg);
-        let inner = WIN_W - 4;
-        let line = match win.kind {
-            WinKind::Perf => perf_line(r - 1),
-            WinKind::About => about_line(r - 1),
-            WinKind::Files => files_line(g, r - 1),
-            WinKind::View => view_line(g, r - 1, inner),
-            WinKind::Usb => usb_line(r - 1),
-        };
-        if let Some(text) = line {
-            let t: String = text.chars().take(inner).collect();
-            scr.text(y + r, x + 2, &t, b_fg, b_bg);
-        }
-    }
-    scr.put(y + WIN_H - 1, x, b'+', bd, b_bg);
-    scr.fill(y + WIN_H - 1, x + 1, WIN_W - 2, b'-', bd, b_bg);
-    scr.put(y + WIN_H - 1, x + WIN_W - 1, b'+', bd, b_bg);
-}
-
-fn perf_line(r: usize) -> Option<String> {
-    if r > 8 { return None; }
-    let cpu = perf::cpu_info();
-    let vendor = core::str::from_utf8(&cpu.vendor[..12]).unwrap_or("unknown");
-    let mem = perf::mem_info();
-    let disk = perf::disk_info();
-    let text = match r {
-        1 => format!(" CPU    : {}", vendor),
-        2 => format!(" TSC    : ~{} MHz", cpu.tsc_hz / 1_000_000),
-        3 => format!(" MEM    : {} MiB", mem.total_kib / 1024),
-        4 => format!(" Kernel : ~{} KiB", mem.kernel_kib),
-        5 => format!(" Usage  : {}%", ((mem.kernel_kib * 100) / mem.total_kib.max(1)).min(100)),
-        7 => format!(" Disk   : {}/{} sec", disk.used_sectors, disk.total_sectors),
-        _ => return None,
-    };
-    Some(text)
-}
-
-fn about_line(r: usize) -> Option<String> {
-    let text = match r {
-        1 => "MLOS - Minimal Light OS",
-        2 => "v1.0.6  x86_64  Rust no_std",
-        3 => "Developer: MEME-LMXDG",
-        5 => crate::tr!("Mouse + keyboard desktop", "支持鼠标与键盘的桌面"),
-        6 => crate::tr!("Click icons / menus to start", "点击图标或菜单启动程序"),
-        8 => crate::tr!("Esc: close / quit", "Esc: 关闭/退出"),
-        _ => return None,
-    };
-    Some(text.to_string())
-}
-
-fn files_line(g: &Gui, r: usize) -> Option<String> {
-    if r == 0 {
-        return Some(crate::tr!("Click a file to view", "点击文件查看").into());
-    }
-    let (_, count) = fs::usage();
-    let count = count as usize;
-    if r == 2 && count == 0 {
-        return Some(crate::tr!("(empty - use 'write')", "（空，请用 write 命令）").into());
-    }
-    if r < 3 { return None; }
-    let idx = r - 3;
-    if idx >= 12 { return None; }
-    let name = nth_file(idx)?;
-    let cur = if idx == g.files_sel && idx < count { "> " } else { "  " };
-    let mut size = 0u32;
-    if let Some((entries, _)) = fs::list() {
-        for e in entries.into_iter().flatten() {
-            if e.name_str() == name { size = e.size; }
-        }
-    }
-    Some(format!(" {}{:<20} {:>4} B", cur, name, size))
-}
-
-fn view_line(g: &Gui, r: usize, inner: usize) -> Option<String> {
-    if r == 0 {
-        return Some(format!("File: {}  [Esc]", view_name_str(g)));
-    }
-    static mut CACHE: ([u8; 512], usize, [u8; 30], usize) = ([0; 512], 0, [0; 30], 0);
-    unsafe {
-        if CACHE.2 != g.view_name {
-            let mut buf = [0u8; 512];
-            let n = fs::read(view_name_str(g), &mut buf).unwrap_or(0);
-            CACHE = (buf, n, g.view_name, 1);
-        }
-        let (buf, n, _, _) = CACHE;
-        let line_idx = r - 1;
-        if line_idx > 6 { return None; }
-        let per = inner.saturating_sub(1);
-        let start = line_idx * per;
-        if start >= n { return None; }
-        let end = (start + per).min(n);
-        let txt = core::str::from_utf8(&buf[start..end]).unwrap_or("");
-        Some(format!(" {}", txt))
-    }
-}
-
-#[allow(dead_code)]
-fn total_mem_kib() -> u64 {
-    TOTAL_MEMORY.load(Ordering::Relaxed)
 }
